@@ -8,6 +8,8 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { buildBulkCarrier } from './ship';
 import { createErection } from './erection';
 import { createWelding } from './welding';
+import { createFog, lightBeam } from './atmosphere';
+import { createSound, nearness } from './sound';
 
 const DOCK = { length: 220, width: 48, depth: 14, gate: 8 };
 const HALF_L = DOCK.length / 2;
@@ -284,6 +286,8 @@ for (const [x, side, shadow] of towers) {
     spot.shadow.bias = -0.0005;
   }
   scene.add(spot, spot.target);
+  // 안개 속에서 보이는 빛줄기(실제 조명보다 좁게 그려야 자연스럽다)
+  scene.add(lightBeam(new THREE.Vector3(x, 37.8, z - side * 0.8), spot.target.position, 0.3, 0xffc98a));
 }
 // 도크 바닥 작업등: 선체와 도크 벽 사이 통로에 두어 선체 옆면을 아래에서 비춘다
 for (let x = -HALF_L + 25; x < HALF_L; x += 50)
@@ -308,6 +312,15 @@ const startPlaced = (() => {
 })();
 const hudSub = document.querySelector('.hud p');
 const welding = createWelding(scene);
+const fog = createFog(scene);
+const sound = createSound();
+// 소리 버튼: 브라우저는 사용자가 누른 뒤에만 소리를 낼 수 있다
+const soundBtn = document.getElementById('sound');
+soundBtn?.addEventListener('click', async () => {
+  const on = await sound.toggle();
+  soundBtn.textContent = on ? '소리 끄기' : '소리 켜기';
+  soundBtn.setAttribute('aria-pressed', String(on));
+});
 const erection = createErection(
   scene,
   { crane, trolley, setHookPoint, getHookPoint },
@@ -320,7 +333,10 @@ const erection = createErection(
     onStatus: (text) => {
       if (hudSub) hudSub.textContent = text;
     },
-    onPlaced: (box) => welding.start(box),
+    onPlaced: (box) => {
+      welding.start(box);
+      sound.thump(nearness(camera.position.distanceTo(box.getCenter(new THREE.Vector3()))));
+    },
   },
 );
 // 속도 버튼: ×1 → ×4 → ×16
@@ -442,6 +458,9 @@ window.addEventListener('resize', resize);
 resize();
 
 const clock = new THREE.Clock();
+const tmp = new THREE.Vector3();
+let lastCraneX = crane.position.x;
+let lastHook = getHookPoint();
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.1); // 탭을 오래 비웠다 돌아와도 한 번에 건너뛰지 않게
   const t = clock.elapsedTime;
@@ -449,6 +468,19 @@ renderer.setAnimationLoop(() => {
     erection.update(dt * speed);
     welding.update(dt);
   }
+  fog.update(dt, t);
+  // 소리: 크레인이 움직이는 빠르기와 용접 아크까지의 거리로 크기를 정한다
+  if (sound.on && dt > 0) {
+    trolley.getWorldPosition(tmp);
+    const move = Math.abs(crane.position.x - lastCraneX) + Math.abs(getHookPoint() - lastHook);
+    const motor = Math.min(1, move / dt / 6) * nearness(camera.position.distanceTo(tmp) * 0.6);
+    const arcs = welding.arcs();
+    const nearest = arcs.reduce((m, p) => Math.min(m, camera.position.distanceTo(p)), Infinity);
+    const weld = arcs.length ? nearness(nearest) * Math.min(1, 0.5 + arcs.length * 0.25) : 0;
+    sound.update(dt, motor, weld);
+  }
+  lastCraneX = crane.position.x;
+  lastHook = getHookPoint();
   // 잔잔한 파도
   const arr = seaPos.array as Float32Array;
   for (let i = 0; i < arr.length; i += 3) {

@@ -188,5 +188,8 @@ export function createWelding(scene: THREE.Scene) {
     colAttr.needsUpdate = true;
   }
 
-  return { start, update };
+  /** 지금 아크가 켜진 자리들(소리 크기 계산용) */
+  const arcs = () => welders.filter((w) => w.left > 0 && w.arc).map((w) => w.pos);
+
+  return { start, update, arcs };
 }
