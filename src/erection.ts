@@ -20,7 +20,8 @@ export interface ErectionOptions {
   safeY: number;
   /** 처음부터 앉아 있을 블록 수 */
   placed: number;
-  onStatus: (text: string) => void;
+  /** 탑재 상태가 바뀔 때. placed = 지금까지 자리에 앉은 블록 수 */
+  onStatus: (text: string, placed: number) => void;
   /** 블록이 자리에 앉은 순간(용접 시작 등). box 는 제자리에서의 월드 경계 상자 */
   onPlaced?: (box: THREE.Box3) => void;
 }
@@ -102,8 +103,8 @@ export function createErection(scene: THREE.Scene, rig: Rig, blocks: Block[], op
 
   function status() {
     const n = blocks.length;
-    if (index >= n) opt.onStatus(`벌크선 1척 · ${n}/${n} 탑재 완료 · 곧 다음 배`);
-    else opt.onStatus(`벌크선 1척 · ${index}/${n} 탑재 · 지금: ${blocks[index].name}`);
+    if (index >= n) opt.onStatus(`${n}/${n} 탑재 완료 · 곧 다음 배`, n);
+    else opt.onStatus(`${index}/${n} 탑재 · 지금 ${blocks[index].name}`, index);
   }
 
   function begin() {
@@ -194,5 +195,11 @@ export function createErection(scene: THREE.Scene, rig: Rig, blocks: Block[], op
   }
 
   reset(Math.min(Math.max(0, opt.placed), blocks.length));
-  return { update };
+  return {
+    update,
+    /** 지금까지 앉은 블록 수 */
+    placed: () => index,
+    /** 건조 시점 막대: n 개가 앉은 상태로 옮기고 다음 블록부터 이어서 탑재 */
+    setPlaced: (n: number) => reset(Math.min(Math.max(0, Math.round(n)), blocks.length)),
+  };
 }

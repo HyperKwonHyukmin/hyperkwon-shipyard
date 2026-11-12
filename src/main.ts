@@ -10,6 +10,9 @@ import { createErection } from './erection';
 import { createWelding } from './welding';
 import { createFog, lightBeam } from './atmosphere';
 import { createSound, nearness } from './sound';
+import { STATIONS } from './content/stations';
+import { buildYard } from './yard';
+import { createTour } from './tour';
 
 const DOCK = { length: 220, width: 48, depth: 14, gate: 8 };
 const HALF_L = DOCK.length / 2;
@@ -42,8 +45,8 @@ const controls = new OrbitControls(camera, canvas);
 controls.target.set(0, -6, 0);
 controls.enableDamping = true;
 controls.dampingFactor = 0.06;
-controls.minDistance = 50;
-controls.maxDistance = 520;
+controls.minDistance = 15; // 장소마다 가까이 볼 수 있게
+controls.maxDistance = 900;
 controls.maxPolarAngle = Math.PI * 0.47;
 controls.autoRotate = !matchMedia('(prefers-reduced-motion: reduce)').matches;
 controls.autoRotateSpeed = 0.25;
@@ -310,7 +313,7 @@ const startPlaced = (() => {
   if (Number.isInteger(n) && n >= 0 && n <= blocks.length && params.has('blocks')) return n;
   return still ? blocks.length : 0;
 })();
-const hudSub = document.querySelector('.hud p');
+const hudStatus = document.getElementById('hud-status');
 const welding = createWelding(scene);
 const fog = createFog(scene);
 const sound = createSound();
@@ -330,8 +333,14 @@ const erection = createErection(
     groundY: 0,
     safeY: 60,
     placed: startPlaced,
-    onStatus: (text) => {
-      if (hudSub) hudSub.textContent = text;
+    onStatus: (text, placed) => {
+      if (hudStatus) hudStatus.textContent = `도크: ${text}`;
+      // 도크 장소의 건조 시점 막대를 따라 움직인다(사용자가 끄는 중이면 건드리지 않음)
+      const tl = document.getElementById('tl') as HTMLInputElement | null;
+      if (tl && document.activeElement !== tl) {
+        tl.value = String(placed);
+        updateTimelineLabel(placed);
+      }
     },
     onPlaced: (box) => {
       welding.start(box);
@@ -347,6 +356,32 @@ speedBtn?.addEventListener('click', () => {
   speedBtn.textContent = `×${speed}`;
 });
 if (still && speedBtn) speedBtn.hidden = true;
+// ── 조선소 배치와 장소 둘러보기(P1) ─────────────────────────
+buildYard(scene, STATIONS);
+/** 건조 시점 막대 옆 글: 지금까지 앉은 블록 수와 단계 이름 */
+function updateTimelineLabel(n: number) {
+  const out = document.getElementById('tl-out');
+  if (!out) return;
+  const stage =
+    n === 0 ? '착공 전' : n <= 7 ? '이중저·선수미 하부' : n <= 17 ? '측벽' : n <= 19 ? '선수미 상부' : n < 24 ? '갑판' : n < blocks.length ? '거주구·연돌' : '선체 완성';
+  out.textContent = `${n}/${blocks.length} 블록 · ${stage}`;
+}
+const tour = createTour({
+  camera,
+  controls,
+  stations: STATIONS,
+  placeCamera: !params.has('cam'),
+  renderExtra: (s, el) => {
+    if (s.id !== 'dock') return;
+    el.innerHTML = `<label class="tl">건조 시점 <output id="tl-out"></output>
+      <input type="range" id="tl" min="0" max="${blocks.length}" step="1" value="${erection.placed()}"></label>
+      <div class="tl-marks"><span>착공</span><span>이중저</span><span>측벽</span><span>갑판</span><span>완성</span></div>`;
+    const tl = el.querySelector('#tl') as HTMLInputElement;
+    tl.addEventListener('input', () => updateTimelineLabel(Number(tl.value)));
+    tl.addEventListener('change', () => erection.setPlaced(Number(tl.value)));
+    updateTimelineLabel(erection.placed());
+  },
+});
 // ?t=초: 애니메이션을 그만큼 미리 진행(특정 순간을 캡처할 때)
 {
   const warm = Number(params.get('t'));
@@ -388,10 +423,10 @@ function windowTexture(cols: number, rows: number) {
   t.colorSpace = THREE.SRGBColorSpace;
   return t;
 }
+// 배경 공장(장소 건물은 yard.ts). 장소 시야를 가리지 않게 도로에서 먼 곳에만 둔다
 const sheds: [number, number, number, number, number][] = [
   // x, z, 길이, 높이, 폭
-  [-210, -120, 120, 32, 50],
-  [-200, 110, 90, 26, 44],
+  [-230, -140, 100, 30, 40],
   [-60, -150, 70, 22, 36],
 ];
 for (const [x, z, l, h, w] of sheds) {
@@ -469,6 +504,7 @@ renderer.setAnimationLoop(() => {
     welding.update(dt);
   }
   fog.update(dt, t);
+  tour.update(dt);
   // 소리: 크레인이 움직이는 빠르기와 용접 아크까지의 거리로 크기를 정한다
   if (sound.on && dt > 0) {
     trolley.getWorldPosition(tmp);
