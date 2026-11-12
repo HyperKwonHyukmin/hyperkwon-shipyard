@@ -1,10 +1,13 @@
 /**
  * 조선소 월드 — 1단계: 밤의 빈 드라이 도크.
  * 단위는 m. x = 도크 길이 방향(+x 쪽이 바다·게이트), z = 폭 방향, y = 위. 안벽 상면이 y = 0.
- * 배와 블록(2단계), 블록 탑재 애니메이션(3단계)은 아직 없다.
+ * 배는 ship.ts(2단계). 블록 탑재 애니메이션(3단계)은 아직 없다.
  */
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { buildBulkCarrier } from './ship';
+import { createErection } from './erection';
+import { createWelding } from './welding';
 
 const DOCK = { length: 220, width: 48, depth: 14, gate: 8 };
 const HALF_L = DOCK.length / 2;
@@ -42,6 +45,16 @@ controls.maxDistance = 520;
 controls.maxPolarAngle = Math.PI * 0.47;
 controls.autoRotate = !matchMedia('(prefers-reduced-motion: reduce)').matches;
 controls.autoRotateSpeed = 0.25;
+// ?cam=x,y,z,tx,ty,tz — 시점을 고정해 캡처할 때(확인용). 자동 회전도 끈다.
+{
+  const v = new URLSearchParams(location.search).get('cam')?.split(',').map(Number);
+  if (v?.length === 6 && v.every(Number.isFinite)) {
+    camera.position.set(v[0], v[1], v[2]);
+    controls.target.set(v[3], v[4], v[5]);
+    controls.minDistance = 5;
+    controls.autoRotate = false;
+  }
+}
 controls.addEventListener('start', () => {
   controls.autoRotate = false;
   const hint = document.getElementById('hint');
@@ -208,9 +221,28 @@ crane.add(trolley);
   trolley.add(body);
 }
 const hook = new THREE.Group();
-hook.position.y = -36;
 trolley.add(hook);
-for (const dx of [-1.2, 1.2]) strut(new THREE.Vector3(dx, 0, 0), new THREE.Vector3(dx, -36, 0), 0.12, mat.steel, trolley);
+// 와이어: 길이 1 짜리 원통을 늘려 훅 높이에 맞춘다
+const cables = [-1.2, 1.2].map((dx) => {
+  const c = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 1, 8), mat.steel);
+  c.position.x = dx;
+  c.castShadow = true;
+  trolley.add(c);
+  return c;
+});
+/** 훅 끝(블록 윗면이 닿는 점)이 훅 원점보다 이만큼 아래 */
+const HOOK_DROP = 3.2;
+const TROLLEY_Y = CRANE_H + 6.6;
+function setHookPoint(worldY: number) {
+  const y = Math.min(-4, worldY + HOOK_DROP - TROLLEY_Y);
+  hook.position.y = y;
+  for (const c of cables) {
+    c.position.y = y / 2;
+    c.scale.y = -y;
+  }
+}
+const getHookPoint = () => TROLLEY_Y + hook.position.y - HOOK_DROP;
+setHookPoint(TROLLEY_Y - 36 - HOOK_DROP);
 {
   const block = new THREE.Mesh(new THREE.BoxGeometry(3.6, 2.4, 1.6), mat.safety);
   hook.add(block);
@@ -253,11 +285,60 @@ for (const [x, side, shadow] of towers) {
   }
   scene.add(spot, spot.target);
 }
-// 도크 바닥 작업등(작은 점광원들)
-for (let x = -HALF_L + 25; x < HALF_L; x += 50) {
-  const p = new THREE.PointLight(0xffd9a0, 300, 60, 2);
-  p.position.set(x, -DOCK.depth + 6, 0);
-  scene.add(p);
+// 도크 바닥 작업등: 선체와 도크 벽 사이 통로에 두어 선체 옆면을 아래에서 비춘다
+for (let x = -HALF_L + 25; x < HALF_L; x += 50)
+  for (const z of [-20, 20]) {
+    const p = new THREE.PointLight(0xffd9a0, 260, 55, 2);
+    p.position.set(x, -DOCK.depth + 6, z);
+    scene.add(p);
+  }
+
+// ── 배 ────────────────────────────────────────────────────
+// 반목 위에 앉힌다. 빈 도크에서 시작해 크레인이 블록을 하나씩 탑재한다.
+// ?blocks=N: N개가 이미 앉은 상태에서 시작 · ?still: 애니메이션 없이 멈춤(기본은 전부 탑재된 모습)
+const { ship, blocks } = buildBulkCarrier();
+ship.position.y = -DOCK.depth + 1.8;
+scene.add(ship);
+const params = new URLSearchParams(location.search);
+const still = params.has('still');
+const startPlaced = (() => {
+  const n = Number(params.get('blocks'));
+  if (Number.isInteger(n) && n >= 0 && n <= blocks.length && params.has('blocks')) return n;
+  return still ? blocks.length : 0;
+})();
+const hudSub = document.querySelector('.hud p');
+const welding = createWelding(scene);
+const erection = createErection(
+  scene,
+  { crane, trolley, setHookPoint, getHookPoint },
+  blocks,
+  {
+    stageX: -140,
+    groundY: 0,
+    safeY: 60,
+    placed: startPlaced,
+    onStatus: (text) => {
+      if (hudSub) hudSub.textContent = text;
+    },
+    onPlaced: (box) => welding.start(box),
+  },
+);
+// 속도 버튼: ×1 → ×4 → ×16
+let speed = 1;
+const speedBtn = document.getElementById('speed');
+speedBtn?.addEventListener('click', () => {
+  speed = speed >= 16 ? 1 : speed * 4;
+  speedBtn.textContent = `×${speed}`;
+});
+if (still && speedBtn) speedBtn.hidden = true;
+// ?t=초: 애니메이션을 그만큼 미리 진행(특정 순간을 캡처할 때)
+{
+  const warm = Number(params.get('t'));
+  if (!still && warm > 0)
+    for (let x = 0; x < Math.min(warm, 3600); x += 0.05) {
+      erection.update(0.05);
+      welding.update(0.05);
+    }
 }
 
 // ── 바다 ──────────────────────────────────────────────────
@@ -362,7 +443,12 @@ resize();
 
 const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
-  const t = clock.getElapsedTime();
+  const dt = Math.min(clock.getDelta(), 0.1); // 탭을 오래 비웠다 돌아와도 한 번에 건너뛰지 않게
+  const t = clock.elapsedTime;
+  if (!still) {
+    erection.update(dt * speed);
+    welding.update(dt);
+  }
   // 잔잔한 파도
   const arr = seaPos.array as Float32Array;
   for (let i = 0; i < arr.length; i += 3) {
