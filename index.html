@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <meta name="theme-color" content="#0a1120" />
+    <meta name="description" content="밤의 조선소를 거니는 3D 월드" />
+    <link rel="stylesheet" href="/fonts.css" />
+    <title>조선소 월드</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #0a1120; overflow: hidden; }
+      body { font-family: Pretendard, system-ui, sans-serif; color: #e8edf5; }
+      #scene { position: fixed; inset: 0; display: block; width: 100%; height: 100%; touch-action: none; }
+      .hud { position: fixed; left: 16px; top: 16px; pointer-events: none; text-shadow: 0 1px 6px rgba(0, 0, 0, .6); }
+      .hud h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -.01em; }
+      .hud p { margin: 4px 0 0; font-size: 13px; color: #a9b6c8; }
+      .hint { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); font-size: 12px; color: #8494aa;
+        pointer-events: none; white-space: nowrap; transition: opacity .6s; }
+      .error { position: fixed; inset: 0; display: grid; place-items: center; padding: 16px; text-align: center; color: #c9d3e0; }
+    </style>
+  </head>
+  <body>
+    <canvas id="scene" aria-label="밤의 드라이 도크 3D 장면"></canvas>
+    <div class="hud">
+      <h1>조선소 월드</h1>
+      <p>밤의 드라이 도크</p>
+    </div>
+    <div class="hint" id="hint">끌어서 돌리기 · 휠·두 손가락으로 확대</div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
