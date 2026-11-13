@@ -22,6 +22,8 @@ export interface ErectionOptions {
   placed: number;
   /** 탑재 상태가 바뀔 때. placed = 지금까지 자리에 앉은 블록 수 */
   onStatus: (text: string, placed: number) => void;
+  /** true 면 다 쌓은 뒤 저절로 다시 시작하지 않고 기다린다(진수가 끝나면 밖에서 setPlaced(0)) */
+  holdAtEnd?: boolean;
   /** 블록이 자리에 앉은 순간(용접 시작 등). box 는 제자리에서의 월드 경계 상자 */
   onPlaced?: (box: THREE.Box3) => void;
 }
@@ -103,7 +105,7 @@ export function createErection(scene: THREE.Scene, rig: Rig, blocks: Block[], op
 
   function status() {
     const n = blocks.length;
-    if (index >= n) opt.onStatus(`${n}/${n} 탑재 완료 · 곧 다음 배`, n);
+    if (index >= n) opt.onStatus(`${n}/${n} 탑재 완료 · ${opt.holdAtEnd ? '진수 준비' : '곧 다음 배'}`, n);
     else opt.onStatus(`${index}/${n} 탑재 · 지금 ${blocks[index].name}`, index);
   }
 
@@ -173,6 +175,7 @@ export function createErection(scene: THREE.Scene, rig: Rig, blocks: Block[], op
 
   function update(dt: number) {
     if (index >= blocks.length) {
+      if (opt.holdAtEnd) return;
       holdDone += dt;
       if (holdDone > 12) reset(0);
       return;

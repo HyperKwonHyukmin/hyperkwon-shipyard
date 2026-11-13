@@ -13,6 +13,16 @@ import { createSound, nearness } from './sound';
 import { STATIONS } from './content/stations';
 import { buildYard } from './yard';
 import { createTour } from './tour';
+import { createCutting } from './factory/cutting';
+import { createAssembly } from './factory/assembly';
+import { createPE } from './factory/pe';
+import { createPaint } from './factory/paint';
+import { createDayNight } from './daynight';
+import { createTraffic } from './traffic';
+import { createLaunch } from './launch';
+import { createQuay } from './quay';
+import { createTrial } from './trial';
+import { createDelivery } from './delivery';
 
 const DOCK = { length: 220, width: 48, depth: 14, gate: 8 };
 const HALF_L = DOCK.length / 2;
@@ -127,8 +137,13 @@ for (const side of [-1, 1]) {
 }
 
 // 게이트(케이슨)
-box(DOCK.gate, DOCK.depth + 1, DOCK.width + 4, mat.gate, HALF_L + DOCK.gate / 2, -DOCK.depth / 2 + 0.5, 0);
-box(DOCK.gate + 0.4, 0.4, DOCK.width + 4.4, mat.safety, HALF_L + DOCK.gate / 2, 1.2, 0);
+// 진수 때 떠서 비켜나도록 묶어 둔다(launch.ts)
+const gate = new THREE.Group();
+scene.add(gate);
+gate.add(
+  box(DOCK.gate, DOCK.depth + 1, DOCK.width + 4, mat.gate, HALF_L + DOCK.gate / 2, -DOCK.depth / 2 + 0.5, 0),
+  box(DOCK.gate + 0.4, 0.4, DOCK.width + 4.4, mat.safety, HALF_L + DOCK.gate / 2, 1.2, 0),
+);
 
 // 도크 가장자리 안전 난간(노란 띠)과 바다 쪽 계선주
 for (const side of [-1, 1]) box(DOCK.length, 0.5, 0.3, mat.safety, 0, 0.6, side * (HALF_W + 0.4), false);
@@ -258,7 +273,10 @@ setHookPoint(TROLLEY_Y - 36 - HOOK_DROP);
 }
 
 // ── 조명 ──────────────────────────────────────────────────
-scene.add(new THREE.HemisphereLight(0x5a6f9c, 0x1e1a16, 1.3));
+const hemi = new THREE.HemisphereLight(0x5a6f9c, 0x1e1a16, 1.3);
+scene.add(hemi);
+/** 밤에만 보일 것(낮/밤 전환에서 숨김) */
+const nightOnly: THREE.Object3D[] = [];
 const moon = new THREE.DirectionalLight(0x9fb4e0, 0.9);
 moon.position.set(300, 400, -200);
 scene.add(moon);
@@ -290,7 +308,9 @@ for (const [x, side, shadow] of towers) {
   }
   scene.add(spot, spot.target);
   // 안개 속에서 보이는 빛줄기(실제 조명보다 좁게 그려야 자연스럽다)
-  scene.add(lightBeam(new THREE.Vector3(x, 37.8, z - side * 0.8), spot.target.position, 0.3, 0xffc98a));
+  const beam = lightBeam(new THREE.Vector3(x, 37.8, z - side * 0.8), spot.target.position, 0.3, 0xffc98a);
+  scene.add(beam);
+  nightOnly.push(beam);
 }
 // 도크 바닥 작업등: 선체와 도크 벽 사이 통로에 두어 선체 옆면을 아래에서 비춘다
 for (let x = -HALF_L + 25; x < HALF_L; x += 50)
@@ -333,6 +353,7 @@ const erection = createErection(
     groundY: 0,
     safeY: 60,
     placed: startPlaced,
+    holdAtEnd: true,
     onStatus: (text, placed) => {
       if (hudStatus) hudStatus.textContent = `도크: ${text}`;
       // 도크 장소의 건조 시점 막대를 따라 움직인다(사용자가 끄는 중이면 건드리지 않음)
@@ -357,7 +378,49 @@ speedBtn?.addEventListener('click', () => {
 });
 if (still && speedBtn) speedBtn.hidden = true;
 // ── 조선소 배치와 장소 둘러보기(P1) ─────────────────────────
-buildYard(scene, STATIONS);
+const yard = buildYard(scene, STATIONS);
+// ── 공장 장면(P2) — 카메라가 바라보는 곳 근처의 공장만 움직인다 ──
+const stationAt = (id: string) => STATIONS.find((s) => s.id === id)!.at;
+const factories: Record<string, { update: (machineDt: number, dt: number) => void; status: () => string }> = {
+  cutting: createCutting(scene, stationAt('cutting')),
+  assembly: createAssembly(scene, stationAt('assembly')),
+  pe: createPE(scene, stationAt('pe')),
+  paint: createPaint(scene, stationAt('paint')),
+};
+const NEAR = 260;
+// 공장 사이 도로를 오가는 트랜스포터(블록 흐름)
+const traffic = createTraffic(scene, STATIONS);
+// ── 진수(P3-1): 탑재가 끝나면 물 채우기 → 게이트 열기 → 예인선 ──
+let park0: number | null = null;
+const launch = createLaunch({
+  scene,
+  ship,
+  gate,
+  dock: { x0: -HALF_L, x1: X_SEA, halfW: HALF_W, floorY: -DOCK.depth },
+  seaY: SEA_Y,
+  draft: 7,
+  parkCrane: (k) => {
+    if (park0 === null) park0 = crane.position.x;
+    crane.position.x = THREE.MathUtils.lerp(park0, -140, k < 0.5 ? 4 * k * k * k : 1 - (-2 * k + 2) ** 3 / 2);
+    setHookPoint(THREE.MathUtils.lerp(getHookPoint(), 60, 0.08));
+    if (k >= 1) park0 = null;
+  },
+  isComplete: () => erection.placed() >= blocks.length,
+  restart: () => erection.setPlaced(0),
+});
+factories.launch = { update: () => {}, status: launch.status };
+// ── 의장 안벽(P3-2): 진수한 배가 안벽에서 후행의장을 마치고 시운전 해역으로 ──
+factories.quay = createQuay(scene, stationAt('quay'), { seaY: SEA_Y, draft: 7 });
+// ── 시운전(P3-3): 속력, 선회, 지그재그, 긴급 정지 ──
+factories.trial = createTrial(scene, { seaY: SEA_Y, draft: 7 });
+// ── 명명식과 인도(P3-4): 병 깨기, 오색 종이, 뱃고동, 선주 깃발, 첫 항해 ──
+factories.delivery = createDelivery(scene, stationAt('delivery'), { seaY: SEA_Y, draft: 7, onHorn: () => sound.horn() });
+function updateFactories(machineDt: number, dt: number) {
+  for (const [id, f] of Object.entries(factories)) {
+    const [x, , z] = stationAt(id);
+    if (Math.hypot(controls.target.x - x, controls.target.z - z) < NEAR) f.update(machineDt, dt);
+  }
+}
 /** 건조 시점 막대 옆 글: 지금까지 앉은 블록 수와 단계 이름 */
 function updateTimelineLabel(n: number) {
   const out = document.getElementById('tl-out');
@@ -372,13 +435,28 @@ const tour = createTour({
   stations: STATIONS,
   placeCamera: !params.has('cam'),
   renderExtra: (s, el) => {
+    if (factories[s.id]) {
+      el.innerHTML = '<p class="live"><span>지금</span> <output id="live"></output></p>';
+      if (s.id === 'launch') {
+        // 탑재를 다 기다리지 않고 진수를 보는 버튼(×1 로 26개를 쌓으면 17분쯤 걸림)
+        el.insertAdjacentHTML('beforeend', '<button class="btn primary" id="launch-now" type="button">진수 바로 보기</button>');
+        el.querySelector('#launch-now')!.addEventListener('click', () => {
+          launch.abort();
+          erection.setPlaced(blocks.length);
+        });
+      }
+      return;
+    }
     if (s.id !== 'dock') return;
     el.innerHTML = `<label class="tl">건조 시점 <output id="tl-out"></output>
       <input type="range" id="tl" min="0" max="${blocks.length}" step="1" value="${erection.placed()}"></label>
       <div class="tl-marks"><span>착공</span><span>이중저</span><span>측벽</span><span>갑판</span><span>완성</span></div>`;
     const tl = el.querySelector('#tl') as HTMLInputElement;
     tl.addEventListener('input', () => updateTimelineLabel(Number(tl.value)));
-    tl.addEventListener('change', () => erection.setPlaced(Number(tl.value)));
+    tl.addEventListener('change', () => {
+      launch.abort();
+      erection.setPlaced(Number(tl.value));
+    });
     updateTimelineLabel(erection.placed());
   },
 });
@@ -389,6 +467,9 @@ const tour = createTour({
     for (let x = 0; x < Math.min(warm, 3600); x += 0.05) {
       erection.update(0.05);
       welding.update(0.05);
+      for (const f of Object.values(factories)) f.update(0.05, 0.05);
+      traffic.update(0.05);
+      launch.update(0.05);
     }
 }
 
@@ -448,7 +529,9 @@ for (const [x, z, l, h, w] of sheds) {
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  scene.add(new THREE.Points(g, new THREE.PointsMaterial({ color: 0xffcf8a, size: 3, sizeAttenuation: false, fog: false })));
+  const city = new THREE.Points(g, new THREE.PointsMaterial({ color: 0xffcf8a, size: 3, sizeAttenuation: false, fog: false }));
+  scene.add(city);
+  nightOnly.push(city);
 }
 {
   const n = 1200;
@@ -461,7 +544,9 @@ for (const [x, z, l, h, w] of sheds) {
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  scene.add(new THREE.Points(g, new THREE.PointsMaterial({ color: 0xdde6ff, size: 1.6, sizeAttenuation: false, fog: false, transparent: true, opacity: 0.8 })));
+  const stars = new THREE.Points(g, new THREE.PointsMaterial({ color: 0xdde6ff, size: 1.6, sizeAttenuation: false, fog: false, transparent: true, opacity: 0.8 }));
+  scene.add(stars);
+  nightOnly.push(stars);
 }
 
 function skyTexture() {
@@ -481,6 +566,28 @@ function skyTexture() {
   return t;
 }
 
+// ── 낮 / 밤 ─────────────────────────────────────────────
+const dayNight = createDayNight({
+  scene,
+  renderer,
+  hemi,
+  moon,
+  sea: sea.material as THREE.MeshStandardMaterial,
+  nightOnly,
+  setFog: fog.setVisible,
+});
+const timeBtn = document.getElementById('time');
+function timeLabel() {
+  if (!timeBtn) return;
+  timeBtn.textContent = dayNight.mode === 'day' ? '밤으로' : '낮으로';
+  timeBtn.setAttribute('aria-label', dayNight.mode === 'day' ? '밤 장면으로 바꾸기' : '낮 장면으로 바꾸기');
+}
+timeBtn?.addEventListener('click', () => {
+  dayNight.toggle();
+  timeLabel();
+});
+timeLabel();
+
 // ── 화면 크기·반복 ────────────────────────────────────────
 function resize() {
   const w = window.innerWidth;
@@ -496,6 +603,7 @@ const clock = new THREE.Clock();
 const tmp = new THREE.Vector3();
 let lastCraneX = crane.position.x;
 let lastHook = getHookPoint();
+let liveTimer = 0;
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.1); // 탭을 오래 비웠다 돌아와도 한 번에 건너뛰지 않게
   const t = clock.elapsedTime;
@@ -503,8 +611,22 @@ renderer.setAnimationLoop(() => {
     erection.update(dt * speed);
     welding.update(dt);
   }
+  if (!still) {
+    updateFactories(dt * speed, dt);
+    traffic.update(dt * speed);
+    launch.update(dt * speed);
+  }
+  liveTimer -= dt;
+  if (liveTimer <= 0) {
+    liveTimer = 0.3;
+    if (launch.active && hudStatus) hudStatus.textContent = `도크: 진수 — ${launch.status()}`;
+    const live = document.getElementById('live');
+    const f = factories[STATIONS[tour.current]?.id];
+    if (live && f) live.textContent = f.status();
+  }
   fog.update(dt, t);
   tour.update(dt);
+  yard.fadeLabels(camera.position, tour.current);
   // 소리: 크레인이 움직이는 빠르기와 용접 아크까지의 거리로 크기를 정한다
   if (sound.on && dt > 0) {
     trolley.getWorldPosition(tmp);

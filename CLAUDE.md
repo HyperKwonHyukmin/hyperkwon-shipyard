@@ -16,3 +16,18 @@
 - TypeScript + Three.js, 프레임워크 없음. 형상은 기본 도형으로 만든다(모델 파일 위주로 바꾸지 않는다).
 - 변경 후 `npm run build`. 화면은 헤드리스 Chrome으로 캡처해 확인한다(`?t=초`로 애니메이션을 미리 진행, `?cam=`으로 시점 고정 — README 참고).
 - 커밋·푸시·배포는 사용자가 요청할 때만. 배포는 보류 중(README '결정').
+
+## 장면을 만들 때 지킬 것(2026-11-13, P2에서 정함)
+
+- 공장은 `src/factory/shed.ts`의 공용 부품(열린 건물, 천장 크레인, `craneSteps`, `sequence`, `sparks`)으로 만든다. 새 장소도 `{ update(machineDt, dt), status() }`를 돌려주고 `main.ts`의 `factories`에 등록하면 패널 '지금' 줄과 근처에서만 움직이기(260 m)가 따라온다.
+- **점광원을 함부로 늘리지 않는다.** 개수만큼 장면 전체 셰이더가 무거워진다(지금 약 9개 + 도크, 의장 안벽은 밤 투광등 1개). 새 장소는 1개 이하, 나머지 빛은 발광 재질로. 실제 GPU 속도는 아직 확인 못 함.
+- 도로에서 보면 +z 쪽 건물은 +x가 화면 왼쪽이다. 작업 흐름이 화면 왼쪽 → 오른쪽으로 읽히게 배치한다. 오른쪽 설명 패널에 가리면 장소의 `look`으로 시점을 옮긴다.
+- 블록 흐름 문장은 `stations.ts`의 `flow` 한 곳에만 둔다(패널, 지도 화살표, 도로 트랜스포터가 여기서 나옴).
+- 낮과 밤을 둘 다 확인한다(`?day`, `?night`). 새 발광 재질과 조명은 `daynight.ts`가 처음 훑을 때 밤 기준값으로 잡히므로, 장면을 만든 뒤에 전환기를 만드는 순서를 지킨다.
+- 바다 장소(P3에서 정함, 2026-11-13):
+  - 안벽에 배를 대는 장면은 `src/berth.ts`(계류 위치, 계류줄, 예인선)를 쓴다. 배는 장소마다 `buildBulkCarrier()`로 따로 한 척.
+  - 시점은 바다 쪽에서 잡는다(부두 너머에서 보면 배가 부두에 가림). 화면 폭은 약 500 m라 움직이는 배의 항적은 그 안에 들게 줄이고, 줄였다고 설명 패널에 적는다.
+  - 바다 위 조명은 점광원 대신 SpotLight를 쓴다. 점광원은 낮 바다에 하얀 반사 얼룩을 만들고, SpotLight는 `daynight.ts`가 낮에 끈다.
+  - 배를 돌릴 때는 뱃머리와 고물이 부두를 치지 않는 방향과 거리를 먼저 계산한다(반경 = 배 길이의 절반 95 m).
+  - 직접 만든 `Points`는 색을 바꾸면 `color` 속성에도 `needsUpdate`를 준다(빠뜨리면 처음 올라간 검은색이 남는다).
+- 캡처: `"C:\Program Files\Google\Chrome\Application\chrome.exe" --headless=new --user-data-dir=<임시 폴더> --use-angle=swiftshader --enable-unsafe-swiftshader --window-size=1440,900 --virtual-time-budget=9000 --screenshot=<png> "<주소>"`(회사 PC). 390px 폭은 헤드리스 창 최소 폭 때문에 잘려 보일 수 있다.

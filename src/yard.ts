@@ -85,7 +85,7 @@ function label(no: number, name: string) {
   g.fillText(name, 130, 68);
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
-  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, fog: false, depthWrite: false }));
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, fog: false, depthWrite: false, transparent: true }));
   s.scale.set(40, 8, 1);
   return s;
 }
@@ -131,38 +131,8 @@ export function buildYard(scene: THREE.Scene, stations: Station[]) {
     const [x, , z] = at('design');
     add(building(x, z, 44, 34, 26));
   }
-  // 2 강재 가공공장, 3 조립공장, 5 도장공장: 공장동
-  {
-    const [x, , z] = at('cutting');
-    add(building(x, z, 80, 22, 40));
-  }
-  {
-    const [x, , z] = at('assembly');
-    add(building(x, z, 90, 26, 44));
-  }
-  {
-    const [x, , z] = at('paint');
-    add(building(x, z, 66, 20, 38));
-  }
-  // 4 선행탑재장: 트인 마당에 블록 몇 개
-  {
-    const [x, , z] = at('pe');
-    const plate = add(new THREE.Mesh(new THREE.BoxGeometry(90, 0.2, 50), M.plate));
-    plate.position.set(x, 0.1, z);
-    plate.receiveShadow = true;
-    const sizes: [number, number, number, number, number][] = [
-      [-28, -10, 18, 7, 14],
-      [-5, -12, 22, 9, 16],
-      [22, -8, 16, 6, 12],
-      [0, 12, 24, 8, 14],
-    ];
-    for (const [dx, dz, l, h, w] of sizes) {
-      const b = add(new THREE.Mesh(new THREE.BoxGeometry(l, h, w), M.block));
-      b.position.set(x + dx, h / 2 + 0.2, z + dz);
-      b.castShadow = true;
-      b.receiveShadow = true;
-    }
-  }
+  // 2 가공, 3 조립, 4 PE장, 5 도장은 안이 보이는 공장으로 factory/
+  // 4 선행탑재장: 마당·크레인·블록은 factory/pe.ts
   // 8 의장 안벽, 10 인도 안벽: 바다로 뻗은 부두와 계선주
   for (const id of ['quay', 'delivery']) {
     const [x, , z] = at(id);
@@ -181,13 +151,12 @@ export function buildYard(scene: THREE.Scene, stations: Station[]) {
       head.position.set(px, 14, z - edge * 0.6);
     }
   }
-  // 9 시운전 해역: 부표
+  // 9 시운전 해역: 속력 시험 구간 양 끝 표지 부표(배는 z = 0 줄을 +x 로 달림, trial.ts)
   {
     const [x, , z] = at('trial');
     for (const [dx, dz] of [
-      [0, 0],
-      [60, -40],
-      [-50, 50],
+      [-60, 38],
+      [100, 38],
     ]) {
       const buoy = add(new THREE.Group());
       const body = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.6, 4, 12), M.buoyRed);
@@ -205,11 +174,19 @@ export function buildYard(scene: THREE.Scene, stations: Station[]) {
     gate: 30, design: 46, cutting: 32, assembly: 36, pe: 24, paint: 30,
     dock: 40, launch: 28, quay: 20, trial: 14, delivery: 20,
   };
-  stations.forEach((s, i) => {
+  const labels = stations.map((s, i) => {
     const l = add(label(i, s.name));
     const [x, y, z] = s.at;
     l.position.set(x, Math.max(0, y) + (LIFT[s.id] ?? 30), z);
+    return l;
   });
 
-  return g;
+  /** 지금 장소의 팻말은 카메라가 가까이 오면 흐리게(공장 안을 볼 때 화면 위를 덮지 않게, 이름은 패널에 있음) */
+  function fadeLabels(cam: THREE.Vector3, current: number) {
+    labels.forEach((l, i) => {
+      const d = cam.distanceTo(l.position);
+      (l.material as THREE.SpriteMaterial).opacity = i === current ? THREE.MathUtils.clamp((d - 140) / 60, 0, 1) : 1;
+    });
+  }
+  return { group: g, fadeLabels };
 }

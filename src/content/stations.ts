@@ -12,6 +12,12 @@ export interface Fact {
   text: string;
   source: Source;
 }
+/** 블록(또는 부재)이 이 장소로 들어오거나(in) 나가는(out) 흐름. to = 상대 장소 id */
+export interface Flow {
+  dir: 'in' | 'out';
+  text: string;
+  to: string;
+}
 export interface Station {
   id: string;
   name: string;
@@ -21,6 +27,10 @@ export interface Station {
   facts: Fact[];
   at: [number, number, number];
   cam: [number, number, number];
+  /** 블록 흐름(패널 '블록 흐름', 지도 화살표, 도로 트랜스포터 경로가 out 흐름에서 나온다) */
+  flow?: Flow[];
+  /** 카메라가 바라볼 점(없으면 at). 오른쪽 설명 패널에 가리지 않게 건물을 화면 왼쪽으로 옮길 때 */
+  look?: [number, number, number];
 }
 
 const S = {
@@ -85,8 +95,9 @@ export const STATIONS: Station[] = [
     summary:
       '강판에 부재 모양을 표시(마킹)하고 잘라 냅니다. 곡면이 필요한 부재는 열이나 압력으로 구부립니다. 이렇게 만든 부재가 다음 공장에서 블록이 됩니다.',
     facts: [{ text: '공식 건조 공정 12단계의 첫 단계가 가공', source: S.report33 }],
+    flow: [{ dir: 'out', text: '잘라 낸 부재', to: 'assembly' }],
     at: [-440, 0, -60],
-    cam: [-510, 44, 60],
+    cam: [-478, 30, -2],
   },
   {
     id: 'assembly',
@@ -98,8 +109,13 @@ export const STATIONS: Station[] = [
       { text: '공식 공정 2~4단계: 소·중조립, 대조립, 선행의장', source: S.report33 },
       { text: '2026년 기사: 용접에 협동로봇, 운반에 자율이동로봇 투입', source: S.zdnet },
     ],
+    flow: [
+      { dir: 'in', text: '잘라 낸 부재', to: 'cutting' },
+      { dir: 'out', text: '조립한 블록(1차 선행탑재로)', to: 'pe' },
+    ],
     at: [-350, 0, 62],
-    cam: [-425, 50, -65],
+    cam: [-364, 48, -22],
+    look: [-364, 0, 62],
   },
   {
     id: 'pe',
@@ -108,8 +124,15 @@ export const STATIONS: Station[] = [
     summary:
       '도크에 올리기 전에 블록 여러 개를 땅 위에서 미리 합쳐 더 큰 블록으로 만듭니다. 도크에서 하는 일을 줄여 도크를 더 빨리 비우기 위해서입니다. 공식 공정에서는 1차 선행탑재 뒤에 도장을 하고, 2차 선행탑재를 한 번 더 합니다.',
     facts: [{ text: '공식 공정 5단계 1차 선행탑재 → 6단계 도장 → 7단계 2차 선행탑재', source: S.report33 }],
+    flow: [
+      { dir: 'in', text: '조립한 블록', to: 'assembly' },
+      { dir: 'out', text: '1차로 합친 블록(도장하러)', to: 'paint' },
+      { dir: 'in', text: '도장을 마친 블록(2차 선행탑재)', to: 'paint' },
+      { dir: 'out', text: '2차로 합친 큰 블록(탑재하러)', to: 'dock' },
+    ],
     at: [-260, 0, -55],
-    cam: [-305, 48, 40],
+    cam: [-252, 88, 28],
+    look: [-250, 2, -55],
   },
   {
     id: 'paint',
@@ -123,8 +146,13 @@ export const STATIONS: Station[] = [
         source: S.report100,
       },
     ],
+    flow: [
+      { dir: 'in', text: '1차로 합친 블록', to: 'pe' },
+      { dir: 'out', text: '도장을 마친 블록', to: 'pe' },
+    ],
     at: [-190, 0, 60],
-    cam: [-250, 42, -50],
+    cam: [-200, 40, -8],
+    look: [-200, 2, 60],
   },
   {
     id: 'dock',
@@ -140,6 +168,7 @@ export const STATIONS: Station[] = [
       { text: '2009년 1도크를 넓혀 세계 최초 T자형 도크로', source: S.tdock },
       { text: '2009년 FPSO 전용 H도크 완공, 1,600톤 골리앗 2기', source: S.hist50 },
     ],
+    flow: [{ dir: 'in', text: '2차로 합친 큰 블록', to: 'pe' }],
     at: [0, -6, 0],
     cam: [-190, 95, 170],
   },
@@ -161,31 +190,38 @@ export const STATIONS: Station[] = [
     name: '의장 안벽',
     processes: ['9 후행의장'],
     summary:
-      '물에 뜬 배를 안벽에 묶어 두고 엔진·발전기·배관·전기·거주구 내부를 마무리합니다. 블록 단계에서 다 하지 못한 의장 작업이 여기서 끝납니다.',
+      '진수한 배를 안벽에 묶어 두고 남은 의장 작업을 마무리합니다. 안벽 크레인이 갑판 크레인, 구명정 같은 큰 장비를 배에 올리고, 배 안에서는 엔진, 발전기, 배관, 전기, 거주구 내부를 끝냅니다. 블록 단계에서 다 하지 못한 의장 작업이 여기서 끝나고, 배를 묶어 둔 채 엔진을 돌려 본 뒤 시운전 해역으로 나갑니다.',
     facts: [{ text: '1979년 국산 선박용 엔진 1호기를 벌크선 해정호에 탑재', source: S.history }],
     at: [280, 0, 152],
-    cam: [190, 42, 245],
+    // 바다 쪽 비스듬히 선수 앞에서 본다(부두 너머에서 보면 배가 부두에 가림). 배 전체와 거주구가 설명 패널 왼쪽에 들어옴
+    cam: [410, 70, -40],
+    look: [250, 0, 125],
   },
   {
     id: 'trial',
     name: '시운전 해역',
     processes: ['11 시운전'],
     summary:
-      '배를 바다로 몰고 나가 속도, 조종, 엔진과 각종 장비가 계약대로 움직이는지 시험합니다. 시험을 통과해야 선주에게 넘길 수 있습니다.',
+      '배를 바다로 몰고 나가 속도, 선회, 지그재그 조종, 긴급 정지와 엔진, 각종 장비가 계약대로 움직이는지 시험합니다. 시험을 통과해야 선주에게 넘길 수 있습니다. 이 장면의 속도와 선회 반경은 보기 좋게 줄인 값입니다.',
     facts: [{ text: '공식 공정 11단계가 시운전', source: S.report33 }],
     at: [700, -3, 0],
-    cam: [600, 30, 95],
+    // 항적 전체(x 약 500~910, z 약 -155~0, trial.ts)가 설명 패널 왼쪽에 들어오게 높이서 본다
+    cam: [680, 280, 360],
+    look: [760, 0, -80],
   },
   {
     id: 'delivery',
     name: '명명식·인도',
     processes: ['12 인도'],
-    summary: '배에 이름을 붙이는 명명식을 하고, 선주에게 배를 넘깁니다. 한 척의 긴 여정이 여기서 끝납니다.',
+    summary:
+      '배에 이름을 붙이는 명명식을 합니다. 대모(스폰서)가 줄을 끊으면 매달린 병이 뱃머리에 부딪혀 깨지고, 만선기를 단 배가 축하를 받습니다. 이어서 선주에게 배를 넘기는 인도 서명을 하고, 배는 선주의 첫 항해를 떠납니다. 한 척의 긴 여정이 여기서 끝납니다.',
     facts: [
       { text: '연간 50여 척 건조', source: S.business },
       { text: '2025년까지 51개국 344개 선주사에 2,300여 척 인도', source: S.business },
     ],
     at: [280, 0, -152],
-    cam: [190, 42, -245],
+    // 뱃머리 앞 바다 쪽에서 단상을 본다. 배는 뱃머리를 -x 로 대서 단상과 뱃머리가 화면 왼쪽, 선체는 오른쪽으로 뻗는다(delivery.ts)
+    cam: [140, 45, -75],
+    look: [225, 4, -140],
   },
 ];

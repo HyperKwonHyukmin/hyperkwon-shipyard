@@ -182,5 +182,7 @@ export function createSound() {
       }
     },
     thump,
+    /** 뱃고동(명명식 등에서 부름). 소리를 끈 상태면 들리지 않는다 */
+    horn,
   };
 }

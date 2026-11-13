@@ -66,7 +66,9 @@ export function createFog(scene: THREE.Scene) {
       p.s.position.y = p.y0 + Math.sin(t * 0.15 + p.phase) * 0.6;
     }
   }
-  return { update };
+  /** 낮에는 땅 안개를 숨긴다 */
+  const setVisible = (v: boolean) => puffs.forEach((p) => (p.s.visible = v));
+  return { update, setVisible };
 }
 
 /** 투광등 빛줄기: from(등)에서 to(비추는 곳) 방향으로 반각 angle 의 원뿔 */

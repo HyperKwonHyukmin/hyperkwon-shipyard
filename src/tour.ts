@@ -77,6 +77,23 @@ export function createTour(opt: TourOptions) {
       )
       .join('');
     $('p-facts-head').hidden = s.facts.length === 0;
+    // 블록 흐름: 어디서 들어오고 어디로 나가는지. 누르면 그 장소로
+    const flowEl = $('p-flow');
+    const flows = s.flow ?? [];
+    flowEl.hidden = flows.length === 0;
+    flowEl.innerHTML = flows.length
+      ? '<h3>블록 흐름</h3>' +
+        flows
+          .map((f) => {
+            const j = stations.findIndex((t) => t.id === f.to);
+            if (j < 0) return '';
+            const where = `${j}. ${esc(stations[j].name)}`;
+            return f.dir === 'in'
+              ? `<button type="button" data-go="${j}"><b>← 들어옴</b> ${where}에서 ${esc(f.text)}</button>`
+              : `<button type="button" data-go="${j}"><b>→ 나감</b> ${esc(f.text)} → ${where}</button>`;
+          })
+          .join('')
+      : '';
     const extra = $('p-extra');
     extra.innerHTML = '';
     opt.renderExtra?.(s, extra);
@@ -103,6 +120,19 @@ export function createTour(opt: TourOptions) {
       rect(110, -26, 118, 26, 'm-gate') +
       rect(130, 139, 430, 165, 'm-pier') +
       rect(130, -165, 430, -139, 'm-pier');
+    // 블록 흐름 화살표(장소 → 도로 → 장소). 겹치지 않게 흐름마다 도로 위 높이를 조금씩 비킨다
+    html += '<defs><marker id="m-arrow" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="m-arrow"/></marker></defs>';
+    let lane = 0;
+    for (const s of stations)
+      for (const f of s.flow ?? []) {
+        const t = stations.find((u) => u.id === f.to);
+        if (f.dir !== 'out' || !t) continue;
+        const [x0, , z0] = s.at;
+        const [x1, , z1] = t.at;
+        const y = (lane++ % 2 ? 1 : -1) * 9;
+        const end = Math.abs(z1) < 1 ? `L${x1 - 120} ${y}` : `L${x1} ${y} L${x1} ${z1 - Math.sign(z1) * 30}`;
+        html += `<path class="m-flow" d="M${x0} ${z0 - Math.sign(z0) * 30} L${x0} ${y} ${end}" marker-end="url(#m-arrow)"/>`;
+      }
     stations.forEach((s, i) => {
       const [x, , z] = s.at;
       const cls = i === current ? 'm-st now' : visited.has(s.id) ? 'm-st seen' : 'm-st';
@@ -146,7 +176,7 @@ export function createTour(opt: TourOptions) {
     visited.add(s.id);
     saveVisited(visited);
     const p1 = new THREE.Vector3(...s.cam);
-    const t1 = new THREE.Vector3(...s.at);
+    const t1 = new THREE.Vector3(...(s.look ?? s.at));
     if (instant) {
       camera.position.copy(p1);
       controls.target.copy(t1);
@@ -164,6 +194,10 @@ export function createTour(opt: TourOptions) {
     }
     render(i);
   }
+  $('p-flow').addEventListener('click', (e) => {
+    const b = (e.target as Element).closest('[data-go]');
+    if (b) go(Number(b.getAttribute('data-go')));
+  });
   $('prev').addEventListener('click', () => go(current - 1));
   $('next').addEventListener('click', () => go(current + 1));
   window.addEventListener('keydown', (e) => {
