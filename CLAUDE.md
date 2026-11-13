@@ -13,7 +13,8 @@
 
 ## 개발
 
-- TypeScript + Three.js, 프레임워크 없음. 형상은 기본 도형으로 만든다(모델 파일 위주로 바꾸지 않는다).
+- TypeScript + Three.js, 프레임워크 없음. **환경(건물·설비·배·야드)은 기본 도형으로 만들고, 사람은 외부 모델을 쓴다**(2026-11-13 변경, `public/models/`). 외부 자료는 CC0 만 넣고 README '외부 자료'에 적는다.
+- **나중에 여러 사람이 접속한다**(2026-11-13 결정, 채팅 없음). 그래서: 야드 배치에 `Math.random()`을 쓰지 않는다(`scenery.ts`의 고정 난수 `rnd()`), 사람의 모습은 `avatar.ts`에만 두고 조작(`walk.ts`)과 섞지 않는다, 사람 한 명당 그리기 호출을 늘리지 않는다.
 - 변경 후 `npm run build`. 화면은 헤드리스 Chrome으로 캡처해 확인한다(`?t=초`로 애니메이션을 미리 진행, `?cam=`으로 시점 고정 — README 참고).
 - 커밋·푸시·배포는 사용자가 요청할 때만. 배포는 보류 중(README '결정').
 
@@ -37,5 +38,7 @@
   - 질감은 `textures.ts`에서 캔버스로 그린다. 밤 불빛이 있는 벽은 `emissiveMap`을 따로 그린다(`map`과 같은 캔버스를 넣으면 `daynight.ts`가 창 불빛 그림으로 보고 다시 칠한다).
   - **병목은 픽셀 계산(GPU)이다**(2026-11-13 사용자 PC 실측: 호출을 1,130 → 453 으로 줄여도 fps 가 안 올랐음). 픽셀마다 비용이 드는 것(조명 수, 그림자, 반사, 큰 투명 판)을 늘릴 때는 `main.ts`의 품질 단계(`applyQuality`)에 끄는 자리를 같이 만든다. 호출 수도 낮게 유지한다. 움직이지 않는 부재를 여러 개 만들었으면 `mergeStatic(그룹)`(`merge.ts`)으로 재질별로 합친다. 합친 뒤에는 개별 부재를 옮기거나 숨길 수 없으니, 움직이는 부품은 따로 그룹에 두고 합친 다음에 붙인다.
   - 같은 모양이 여러 개면 InstancedMesh(가로등, 적치 블록, 나무). 성능 숫자는 `?stats`.
+- 걷기 모드(2026-11-13): `walk.ts`. 막힌 자리는 사각형 목록(`boxes`)이다. 벽이 있는 건물을 새로 만들면 `layout.ts`의 `SHEDS`에, 그 밖의 장애물은 `walk.ts`의 `boxes`에 넣는다. 장소 앞 자리는 `doorOf(at).front`, 바다 장소는 `VIEWPOINT`. 주인공의 앞은 +x 다.
+- 부딪히는 물건은 `props.ts`(물리 엔진 없이 직접 계산, 종류별 InstancedMesh). 새 물건은 `KINDS`에 종류를 더하고 놓을 자리를 `want`에 넣는다. 사람은 `avatar.ts`의 `createAvatar(look)` 하나를 주인공과 선배가 같이 쓴다(앞 = +x, 동작은 `set('walk')`처럼 상태로 바꿈, 색은 색상표 칸 바꾸기).
 - 계산이 들어가는 체험(P4에서 정함, 2026-11-13): 계산은 3D 코드와 떼어 순수 함수 파일로 둔다(`beam.ts`). 숫자는 `npx esbuild <파일> --format=esm --outfile=<스크래치>/x.mjs` 로 묶어 node 로 경우별 값을 찍어 확인한다. 화면에는 '교육용 예시, 실제 설계 값 아님'을 적는다.
 - 캡처: `"C:\Program Files\Google\Chrome\Application\chrome.exe" --headless=new --user-data-dir=<임시 폴더> --use-angle=swiftshader --enable-unsafe-swiftshader --window-size=1440,900 --virtual-time-budget=9000 --screenshot=<png> "<주소>"`(회사 PC). 390px 폭은 헤드리스 창 최소 폭 때문에 잘려 보일 수 있다.

@@ -36,6 +36,14 @@ export const FOOTPRINT: Record<string, { hx: number; hz: number; dz?: number }> 
   paint: { hx: 42, hz: 28 },
 };
 
+/** 벽이 있는 건물(걷기 모드의 충돌용): 길이 l(x), 폭 w(z), 열린 면 open(+1 이면 +z 쪽이 뚫림) */
+export const SHEDS: Record<string, { l: number; w: number; open: 1 | -1 }> = {
+  gate: { l: 50, w: 30, open: 1 },
+  cutting: { l: 80, w: 40, open: 1 },
+  assembly: { l: 90, w: 44, open: -1 },
+  paint: { l: 66, w: 38, open: -1 },
+};
+
 /** 도크로 가는 트랜스포터가 서는 곳(중앙로 동쪽 끝, 도크 뒤 적치장 앞) */
 export const DOCK_STOP: [number, number] = [-140, 0];
 

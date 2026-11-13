@@ -20,6 +20,8 @@ interface TourOptions {
   stations: Station[];
   /** 처음 장소로 카메라를 옮길지(?cam 으로 시점을 고정할 때는 false) */
   placeCamera: boolean;
+  /** 걷기 모드처럼 카메라를 다른 쪽이 잡고 있을 때: true 를 돌려주면 장소만 고르고 카메라는 날리지 않는다 */
+  intercept?: (index: number) => boolean;
   /** 장소별 추가 화면(예: 도크의 건조 시점 막대) */
   renderExtra?: (station: Station, el: HTMLElement) => void;
 }
@@ -167,8 +169,27 @@ export function createTour(opt: TourOptions) {
   });
 
   // ── 이동 ──
+  /** 카메라는 그대로 두고 장소만 고른다(설명 패널, 방문 기록, 그 장소 장면 움직이기) */
+  function select(i: number) {
+    i = THREE.MathUtils.clamp(i, 0, stations.length - 1);
+    if (i === current) return;
+    current = i;
+    visited.add(stations[i].id);
+    saveVisited(visited);
+    try {
+      history.replaceState(null, '', `#${stations[i].id}`);
+    } catch {
+      /* 무시 */
+    }
+    render(i);
+  }
+
   function go(i: number, instant = false) {
     i = THREE.MathUtils.clamp(i, 0, stations.length - 1);
+    if (!instant && opt.intercept?.(i)) {
+      select(i);
+      return;
+    }
     const s = stations[i];
     current = i;
     visited.add(s.id);
@@ -200,9 +221,10 @@ export function createTour(opt: TourOptions) {
   $('next').addEventListener('click', () => go(current + 1));
   window.addEventListener('keydown', (e) => {
     if ((e.target as Element).closest('input, textarea')) return;
-    if (e.key === 'ArrowRight') go(current + 1);
+    if (e.key === 'Escape') openMap(false);
+    else if (opt.intercept?.(-1)) return; // 걷기 모드에서는 방향키가 걷기에 쓰인다(-1 = 물어보기만)
+    else if (e.key === 'ArrowRight') go(current + 1);
     else if (e.key === 'ArrowLeft') go(current - 1);
-    else if (e.key === 'Escape') openMap(false);
   });
 
   /** 장소를 바꾸지 않고 카메라만 다른 시점으로(예: 도크의 인양 학습장 가까이 보기) */
@@ -241,5 +263,10 @@ export function createTour(opt: TourOptions) {
   // ?map: 지도를 연 채로 시작(캡처 확인용)
   if (new URLSearchParams(location.search).has('map')) openMap(true);
 
-  return { go, flyTo, update, get current() { return current; } };
+  /** 날아가던 카메라를 멈춘다(걷기 모드가 카메라를 넘겨받을 때) */
+  const stop = () => {
+    fly = null;
+    controls.enabled = true;
+  };
+  return { go, select, flyTo, stop, update, get current() { return current; } };
 }

@@ -10,7 +10,18 @@ import { cloudTexture, blockTexture } from './textures';
 import { FOOTPRINT, onRoad } from './layout';
 import type { Station } from './content/stations';
 
-const rand = (a: number, b: number) => a + Math.random() * (b - a);
+/**
+ * 고정 난수(mulberry32). 적치 블록·나무·구름 자리는 무작위처럼 보이지만 열 때마다, 누가 열어도 같아야 한다 —
+ * 여러 사람이 접속했을 때 서로 다른 야드를 보면 다른 사람이 블록을 뚫고 지나가는 것처럼 보인다.
+ */
+let seed = 20261113;
+function rnd() {
+  seed = (seed + 0x6d2b79f5) | 0;
+  let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+const rand = (a: number, b: number) => a + rnd() * (b - a);
 
 function skyEnvironment(renderer: THREE.WebGLRenderer) {
   const c = document.createElement('canvas');
@@ -115,13 +126,15 @@ export function createScenery(scene: THREE.Scene, renderer: THREE.WebGLRenderer,
   }
   scene.add(clouds);
 
+  /** 걷기 모드가 피해 갈 자리(적치 블록): [x0, x1, z0, z1] */
+  const obstacles: [number, number, number, number][] = [];
   // ── 블록 적치장: 공장 뒤 빈 땅(z = ±105 ~ ±180)에 받침 위 블록 ──
   {
     const spots: { x: number; z: number; l: number; w: number; h: number }[] = [];
     // 야드 전체를 36 m 격자로 훑어, 길·장소·배경 공장을 피한 칸에만 놓는다(layout.ts)
     for (let x = -700; x < -150; x += 36)
       for (let z = -262; z <= 300; z += 34) {
-        if (Math.random() < 0.38 || !free(x, z, 16)) continue;
+        if (rnd() < 0.38 || !free(x, z, 16)) continue;
         spots.push({ x: x + rand(-4, 4), z: z + rand(-4, 4), l: rand(12, 22), w: rand(9, 15), h: rand(4, 9) });
       }
     const unit = new THREE.BoxGeometry(1, 1, 1);
@@ -132,9 +145,12 @@ export function createScenery(scene: THREE.Scene, renderer: THREE.WebGLRenderer,
     const col = new THREE.Color();
     const PAINT = [0x8a9099, 0x8b4a3a, 0x7f9a86, 0xa7abb0, 0x8b4a3a, 0x6f7a87];
     spots.forEach((s, i) => {
-      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.random() < 0.8 ? 0 : Math.PI / 2);
+      const turned = rnd() >= 0.8;
+      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), turned ? Math.PI / 2 : 0);
+      const [hx, hz] = turned ? [s.w / 2, s.l / 2] : [s.l / 2, s.w / 2];
+      obstacles.push([s.x - hx, s.x + hx, s.z - hz, s.z + hz]);
       blocks.setMatrixAt(i, m4.compose(new THREE.Vector3(s.x, 1.2 + s.h / 2, s.z), q, new THREE.Vector3(s.l, s.h, s.w)));
-      blocks.setColorAt(i, col.setHex(PAINT[Math.floor(Math.random() * PAINT.length)]).offsetHSL(0, 0, rand(-0.04, 0.04)));
+      blocks.setColorAt(i, col.setHex(PAINT[Math.floor(rnd() * PAINT.length)]).offsetHSL(0, 0, rand(-0.04, 0.04)));
       for (const k of [0, 1])
         stands.setMatrixAt(i * 2 + k, m4.compose(new THREE.Vector3(s.x + (k ? 1 : -1) * s.l * 0.3, 0.6, s.z), q, new THREE.Vector3(1.4, 1.2, s.w * 0.9)));
     });
@@ -175,5 +191,5 @@ export function createScenery(scene: THREE.Scene, renderer: THREE.WebGLRenderer,
   const setReflection = (on: boolean) => {
     scene.environment = on ? env : null;
   };
-  return { setDay, setReflection };
+  return { setDay, setReflection, obstacles };
 }

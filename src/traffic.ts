@@ -163,5 +163,23 @@ export function createTraffic(scene: THREE.Scene, stations: Station[]) {
       }
     }
   }
-  return { update };
+  /** 지금 다니는 트랜스포터의 자리와 속도(걷기 모드의 충돌용). 짐까지 덮는 사각형 */
+  const prev = new Map<Run, THREE.Vector3>();
+  function movers(dt: number) {
+    const out: { x: number; z: number; hx: number; hz: number; vx: number; vz: number }[] = [];
+    for (const r of runs) {
+      if (!r.obj.visible) {
+        prev.delete(r);
+        continue;
+      }
+      const p = prev.get(r);
+      const vx = p && dt > 0 ? (r.obj.position.x - p.x) / dt : 0;
+      const vz = p && dt > 0 ? (r.obj.position.z - p.z) / dt : 0;
+      if (p) p.copy(r.obj.position);
+      else prev.set(r, r.obj.position.clone());
+      out.push({ x: r.obj.position.x, z: r.obj.position.z, hx: 9.6, hz: 6.2, vx, vz });
+    }
+    return out;
+  }
+  return { update, movers };
 }

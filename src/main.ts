@@ -27,6 +27,8 @@ import { createHistory, ERAS } from './history';
 import { createDesign } from './design';
 import { createLift } from './lift';
 import { createLightPool } from './lightpool';
+import { createWalk } from './walk';
+import { createProps } from './props';
 import { mergeStatic } from './merge';
 import { createScenery, BACK_SHEDS } from './scenery';
 import { concreteTexture, shedWallTextures } from './textures';
@@ -41,11 +43,15 @@ const canvas = document.getElementById('scene') as HTMLCanvasElement;
 let renderer: THREE.WebGLRenderer;
 // ── 품질 단계(성능) ─────────────────────────────────────
 // 2026-11-13 실측: 그리기 호출을 줄여도 fps 가 안 올랐다 → 병목은 픽셀 계산(GPU). 느리면 픽셀당 일을 단계적으로 줄인다.
-//   0 전부 켬(해상도 1.5 까지, 부드러운 그림자, 하늘빛 반사)   1 해상도 1.0 까지   2 그림자 단순하게(1024)
-//   3 하늘빛 반사 끔   4 그림자 끔   5 해상도 0.75
-// 내려간 단계는 브라우저에 저장해 다음에 그 단계로 시작한다(매번 처음 몇 초 끊기지 않게). ?q=0~5 로 직접 정할 수 있다.
-const QUALITY_KEY = 'ulsan-story:quality';
-const QUALITY_MAX = 5;
+//   0 전부 켬(해상도 1.5배 — 계단 현상이 줄어듦, 부드러운 그림자, 하늘빛 반사)   1 해상도 1.25배   2 해상도 1.0
+//   3 그림자 단순하게(1024)   4 하늘빛 반사 끔   5 그림자 끔   6 해상도 0.75
+// 느리면 한 단계 내리고, 여유가 크면(약 75fps 이상이 이어지면) 한 단계 올려 본다. 올렸다가 느려지면 되돌리고
+// 그 단계를 '이 PC 의 한계'로 저장해 다시 시도하지 않는다(2026-11-13 사용자: "그래픽이 떨어져 보인다" — 82fps 로 여유가 있었음).
+// 단계는 브라우저에 저장한다. ?q=0~6 으로 직접 정할 수 있다(이때는 자동 조절을 하지 않음).
+const QUALITY_KEY = 'ulsan-story:quality:v2';
+const QUALITY_FLOOR_KEY = 'ulsan-story:quality-floor:v2';
+const QUALITY_MAX = 6;
+const RATIOS = [1.5, 1.25, 1, 1, 1, 1, 0.75];
 /** 그래픽 장치 이름(내장 그래픽이면 안티에일리어싱을 처음부터 끈다 — 픽셀당 비용이 가장 큰 항목이고 실행 중에는 못 바꿈) */
 const gpuName = (() => {
   try {
@@ -60,16 +66,27 @@ const gpuName = (() => {
 const weakGpu = /Intel|SwiftShader|Mali|Adreno|PowerVR|Basic Render|Radeon\(TM\) Graphics/i.test(gpuName);
 let quality = (() => {
   const q = new URLSearchParams(location.search).get('q');
-  if (q !== null && /^[0-5]$/.test(q)) return Number(q);
+  if (q !== null && /^[0-6]$/.test(q)) return Number(q);
   try {
-    const saved = Number(localStorage.getItem(QUALITY_KEY));
-    if (Number.isInteger(saved) && saved >= 0 && saved <= QUALITY_MAX) return Math.max(saved, weakGpu ? 1 : 0);
+    const raw = localStorage.getItem(QUALITY_KEY);
+    const saved = Number(raw);
+    if (raw !== null && Number.isInteger(saved) && saved >= 0 && saved <= QUALITY_MAX) return saved;
   } catch {
     /* 저장이 막혀도 그대로 진행 */
   }
-  return weakGpu ? 1 : 0;
+  return weakGpu ? 3 : 0; // 내장 그래픽은 가볍게 시작해서 여유가 있으면 올라간다
 })();
-const useMsaa = !weakGpu && quality < 2;
+/** 올려 봤다가 느려서 되돌린 단계 + 1(이보다 좋은 화질은 다시 시도하지 않음) */
+let qualityFloor = (() => {
+  try {
+    const v = Number(localStorage.getItem(QUALITY_FLOOR_KEY));
+    return Number.isInteger(v) && v >= 0 && v <= QUALITY_MAX ? v : 0;
+  } catch {
+    return 0;
+  }
+})();
+// 내장 그래픽은 MSAA 대신 해상도 배율(위 표의 0~1 단계)로 계단 현상을 줄인다
+const useMsaa = !weakGpu && quality < 3;
 try {
   renderer = new THREE.WebGLRenderer({ canvas, antialias: useMsaa, powerPreference: 'high-performance' });
 } catch {
@@ -503,11 +520,19 @@ function updateTimelineLabel(n: number) {
     n === 0 ? '착공 전' : n <= 7 ? '이중저·선수미 하부' : n <= 17 ? '측벽' : n <= 19 ? '선수미 상부' : n < 24 ? '갑판' : n < blocks.length ? '거주구·연돌' : '선체 완성';
   out.textContent = `${n}/${blocks.length} 블록 · ${stage}`;
 }
+// 걷기 모드(아래에서 만든다. 둘러보기가 먼저 만들어져야 해서 변수만 먼저)
+let walk: ReturnType<typeof createWalk> | null = null;
 const tour = createTour({
   camera,
   controls,
   stations: STATIONS,
   placeCamera: !params.has('cam'),
+  // 걷기 모드에서는 장소를 골라도 카메라를 날리지 않고 주인공을 그 장소 앞으로 옮긴다(-1 = 걷는 중인지 묻기만)
+  intercept: (i) => {
+    if (!walk?.active) return false;
+    if (i >= 0) walk.teleport(i);
+    return true;
+  },
   renderExtra: (s, el) => {
     if (factories[s.id]) {
       el.innerHTML = '<p class="live"><span>지금</span> <output id="live"></output></p>';
@@ -556,13 +581,16 @@ const tour = createTour({
   canvas.addEventListener('dblclick', (e) => {
     const r = canvas.getBoundingClientRect();
     ray.setFromCamera(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), camera);
-    if (!ray.ray.intersectPlane(ground, hit)) return;
+    if (walk?.active || !ray.ray.intersectPlane(ground, hit)) return;
     const d = hit.clone().sub(controls.target);
     const cam = camera.position.clone().add(d);
     tour.flyTo([cam.x, cam.y, cam.z], [hit.x, hit.y, hit.z], 0.6);
   });
   // 전체 보기: 정문에서 안벽까지 한눈에
-  document.getElementById('overview')?.addEventListener('click', () => tour.flyTo([-470, 430, 560], [-230, 0, 40]));
+  document.getElementById('overview')?.addEventListener('click', () => {
+    setWalk(false);
+    tour.flyTo([-470, 430, 560], [-230, 0, 40]);
+  });
 }
 // ?t=초: 애니메이션을 그만큼 미리 진행(특정 순간을 캡처할 때)
 {
@@ -694,6 +722,45 @@ function skyTexture() {
 
 // ── 풍경(디자인 고도화): 하늘빛 반사, 먼 산, 구름, 블록 적치장, 나무 ──
 const scenery = createScenery(scene, renderer, STATIONS);
+// ── 걷기 모드: 주인공이 야드를 걸어서 견학 ──
+const walkBtn = document.getElementById('walk');
+walk = createWalk({
+  scene,
+  camera,
+  controls,
+  canvas,
+  stations: STATIONS,
+  obstacles: scenery.obstacles,
+  hud: document.getElementById('walk-hud')!,
+  dynamic: () => movers,
+  onNear: (i) => tour.select(i),
+  // E: 그 장소를 위에서 본다. '걸어서 견학'을 다시 누르면 선 자리로 돌아온다
+  onLook: (i) => {
+    setWalk(false);
+    tour.go(i);
+  },
+});
+// 부딪히는 물건(고깔·드럼통·상자): 주인공, 자전거, 트랜스포터가 치면 밀려나고 구른다
+const props = createProps(scene, STATIONS, walk.blocked);
+/** 이번 프레임의 트랜스포터 자리와 속도(걷는 동안만 채움) */
+let movers: ReturnType<typeof traffic.movers> = [];
+function setWalk(on: boolean, at?: [number, number]) {
+  if (!walk || walk.active === on) return;
+  if (on) {
+    tour.stop();
+    walk.enter(at);
+  } else walk.exit();
+  walkBtn?.setAttribute('aria-pressed', String(on));
+  if (walkBtn) walkBtn.textContent = on ? '위에서 보기' : '걸어서 견학';
+  if (!on) tour.go(tour.current); // 걷기를 끝내면 지금 장소의 조감 시점으로
+}
+walkBtn?.addEventListener('click', () => setWalk(!walk!.active));
+// ?walk 또는 ?walk=x,z: 걷기 모드로 시작(확인용, 좌표를 주면 그 자리에서)
+if (params.has('walk')) {
+  const v = (params.get('walk') ?? '').split(',').map(Number);
+  setWalk(true, v.length === 2 && v.every(Number.isFinite) ? [v[0], v[1]] : undefined);
+}
+
 // ── 조명 묶음(성능): 장소들이 만든 조명 20여 개를 고정 8개로 돌려 쓴다 ──
 const lightPool = createLightPool(scene);
 // ── 낮 / 밤 ─────────────────────────────────────────────
@@ -747,14 +814,17 @@ const tmp = new THREE.Vector3();
 const shadowAt = new THREE.Vector3();
 const slow = { sum: 0, n: 0 };
 let qualityHold = 0;
+/** 여유가 이어진 측정 횟수, 그리고 방금 올려 본 단계(시험 중이면 그 단계 번호) */
+let fastRuns = 0;
+let probing = -1;
 /** 품질 단계를 적용한다(위 표). 단계가 높을수록 앞 단계의 것을 모두 포함 */
 function applyQuality(level: number) {
   quality = level;
-  pixelRatio = level >= 5 ? 0.75 : Math.min(window.devicePixelRatio, level >= 1 ? 1 : 1.5);
+  pixelRatio = RATIOS[level];
   renderer.setPixelRatio(pixelRatio);
   resize();
-  const type = level >= 2 ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
-  const size = level >= 2 ? 1024 : 2048;
+  const type = level >= 3 ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
+  const size = level >= 3 ? 1024 : 2048;
   let recompile = false;
   if (renderer.shadowMap.type !== type) {
     renderer.shadowMap.type = type;
@@ -765,8 +835,8 @@ function applyQuality(level: number) {
     moon.shadow.map?.dispose();
     moon.shadow.map = null;
   }
-  moon.castShadow = level < 4;
-  scenery.setReflection(level < 3);
+  moon.castShadow = level < 5;
+  scenery.setReflection(level < 4);
   if (recompile)
     scene.traverse((o) => {
       const m = (o as THREE.Mesh).material;
@@ -831,6 +901,14 @@ renderer.setAnimationLoop(() => {
   mat.red.emissiveIntensity = Math.sin(t * 2.4) > 0.2 ? 2.4 : 0.15;
   // 훅이 바람에 살짝 흔들림
   hook.rotation.z = Math.sin(t * 0.7) * 0.02;
+  if (walk?.active) {
+    // 걷는 동안에는 길의 트랜스포터도 늘 움직이고, 물건이 부딪힌다
+    if (!ROAD_STATIONS.has(here) && !still) traffic.update(dt * speed);
+    movers = traffic.movers(dt);
+    walk.update(dt);
+    const me = walk.pusher();
+    props.update(dt, me ? [me, ...movers] : movers);
+  }
   controls.update();
   // 그림자 범위와 조명 묶음을 보는 곳으로. 그림자는 8 m 단위로만 옮겨 가장자리가 일렁이지 않게
   shadowAt.set(Math.round(controls.target.x / 8) * 8, 0, Math.round(controls.target.z / 8) * 8);
@@ -838,14 +916,37 @@ renderer.setAnimationLoop(() => {
   moon.position.copy(shadowAt).add(sunOffset);
   lightPool.update(controls.target);
   if (++frameNo % 2 === 0) renderer.shadowMap.needsUpdate = true;
-  // 느리면 품질을 한 단계 낮춘다: 최근 90프레임 평균이 22 ms(약 45fps)보다 길면. 다시 올리지는 않는다(오르내림 방지).
+  // 품질 자동 조절: 최근 90프레임 평균으로 판단한다.
+  // - 22 ms(약 45fps)보다 길면 한 단계 내린다. 방금 올려 본 단계였다면 그 단계를 한계로 저장한다.
+  // - 13 ms(약 75fps)보다 짧은 측정이 3번 이어지면 한 단계 올려 본다(한계보다 좋게는 가지 않음).
   // 탭이 가려져 있을 때와 단계를 바꾼 직후(셰이더를 다시 만드는 동안)는 재지 않는다
-  if (t > 3 && !document.hidden && t > qualityHold) {
+  if (t > 3 && !document.hidden && t > qualityHold && !params.has('q')) {
     slow.sum += rawDt;
     if (++slow.n >= 90) {
-      if (slow.sum / slow.n > 0.022 && quality < QUALITY_MAX && !params.has('q')) {
+      const avg = slow.sum / slow.n;
+      if (avg > 0.022 && quality < QUALITY_MAX) {
+        if (probing === quality) {
+          qualityFloor = quality + 1;
+          try {
+            localStorage.setItem(QUALITY_FLOOR_KEY, String(qualityFloor));
+          } catch {
+            /* 저장이 막혀도 그대로 */
+          }
+        }
+        probing = -1;
+        fastRuns = 0;
         applyQuality(quality + 1);
         qualityHold = t + 2;
+      } else if (avg < 0.013 && quality > qualityFloor) {
+        if (++fastRuns >= 3) {
+          fastRuns = 0;
+          probing = quality - 1;
+          applyQuality(quality - 1);
+          qualityHold = t + 2;
+        }
+      } else {
+        fastRuns = 0;
+        if (avg <= 0.022) probing = -1; // 올려 본 단계가 버텼다
       }
       slow.sum = slow.n = 0;
     }

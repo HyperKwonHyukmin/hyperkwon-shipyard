@@ -80,6 +80,12 @@
       .lf-t { width: 100%; border-collapse: collapse; font-size: 12px; margin: 6px 0; }
       .lf-t th { text-align: left; font-weight: 500; color: #c9d6e8; padding: 3px 0; }
       .lf-t td { text-align: right; font-weight: 700; white-space: nowrap; padding: 3px 0 3px 8px; }
+      .walk-hud { position: fixed; left: 50%; bottom: 96px; transform: translateX(-50%); z-index: 6; display: flex; flex-direction: column; align-items: center; gap: 8px; pointer-events: none; max-width: min(92vw, 720px); }
+      .walk-hud[hidden] { display: none; }
+      .walk-hud > * { pointer-events: auto; }
+      .walk-keys { margin: 0; padding: 6px 12px; border-radius: 10px; background: rgba(0,37,84,.78); color: #dfe8f5; font-size: 12px; text-align: center; }
+      .walk-keys .btn { padding: 4px 8px; min-width: 0; font-size: 12px; }
+      #walk-look { padding: 12px 18px; font-size: 15px; box-shadow: 0 4px 16px rgba(0,0,0,.35); }
       .eras { display: flex; gap: 6px; margin: 0 0 10px; }
       .eras .btn { flex: 1; }
       .live span { color: var(--heritage); font-weight: 700; }
@@ -149,9 +155,11 @@
       <button class="btn" id="time" type="button">밤으로</button>
       <button class="btn" id="sound" type="button" aria-pressed="false">소리 켜기</button>
       <button class="btn" id="speed" type="button" aria-label="진행 속도">×1</button>
+      <button class="btn primary" id="walk" type="button" aria-pressed="false">걸어서 견학</button>
       <button class="btn" id="spin" type="button" aria-pressed="false" aria-label="화면 자동 회전">회전</button>
       <button class="btn" id="overview" type="button" aria-label="조선소 전체 보기">전체</button>
     </div>
+    <div class="walk-hud" id="walk-hud" hidden></div>
     <aside class="panel" id="panel" aria-label="장소 설명">
       <div class="panel-head">
         <span class="no" id="p-no"></span>
