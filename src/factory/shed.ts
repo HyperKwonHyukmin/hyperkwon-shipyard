@@ -4,6 +4,8 @@
  * - 좌표는 건물 중심 바닥이 원점. x = 건물 길이, z = 폭, y = 위.
  */
 import * as THREE from 'three';
+import { shedWallTextures, concreteTexture, roofTexture } from '../textures';
+import { mergeStatic } from '../merge';
 
 export function std(color: number, roughness = 0.85, metalness = 0.1) {
   return new THREE.MeshStandardMaterial({ color, roughness, metalness });
@@ -39,24 +41,20 @@ export function part(
 }
 export const boxG = (w: number, h: number, d: number) => new THREE.BoxGeometry(w, h, d);
 
-function windowTexture(cols: number, rows: number) {
-  const c = document.createElement('canvas');
-  c.width = cols * 8;
-  c.height = rows * 12;
-  const g = c.getContext('2d')!;
-  g.fillStyle = '#2b3038';
-  g.fillRect(0, 0, c.width, c.height);
-  for (let i = 0; i < cols; i++)
-    for (let j = 0; j < rows; j++) {
-      if (Math.random() < 0.45) continue;
-      g.fillStyle = Math.random() < 0.8 ? '#ffd58a' : '#bfe0ff';
-      g.globalAlpha = 0.4 + Math.random() * 0.5;
-      g.fillRect(i * 8 + 2, j * 12 + 3, 4, 6);
-    }
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
+/** 골강판 벽 재질(위쪽 채광창 띠는 밤에 밝게). cols = 창 칸 수 */
+function sidingMaterial(cols: number) {
+  const t = shedWallTextures(cols);
+  return new THREE.MeshStandardMaterial({
+    map: t.map,
+    emissive: 0xffffff,
+    emissiveMap: t.emissive,
+    emissiveIntensity: 0.9,
+    roughness: 0.6,
+    metalness: 0.35,
+  });
 }
+let roofTex: THREE.Texture | null = null;
+let floorTex: THREE.Texture | null = null;
 
 export interface Shed {
   group: THREE.Group;
@@ -70,42 +68,47 @@ export interface Shed {
  * 열린 공장 건물. open = 비워 둘 긴 벽 쪽(+1 이면 +z 면).
  * 안쪽 조명은 점광원 2개(lights = 1 이면 가운데 1개). 개수를 늘리면 장면 전체 셰이더가 무거워진다.
  */
-export function buildShed(l: number, w: number, h: number, open: 1 | -1, lights: 1 | 2 = 2): Shed {
+export function buildShed(l: number, w: number, h: number, open: 1 | -1, lights: 1 | 2 = 2, crane = true): Shed {
   const g = new THREE.Group();
   const railY = h - 5;
   const back = -open * (w / 2);
 
-  part(g, boxG(l + 2, 0.2, w + 2), FM.floor, 0, 0.1, 0, false);
+  // 바닥: 콘크리트 슬래브(공장마다 크기에 맞춰 반복), 지붕: 골강판
+  floorTex ??= concreteTexture();
+  const ft = floorTex.clone();
+  ft.repeat.set(l / 20, w / 20);
+  part(g, boxG(l + 2, 0.2, w + 2), new THREE.MeshStandardMaterial({ map: ft, color: 0x9aa0a8, roughness: 0.9 }), 0, 0.1, 0, false);
+  if (!roofTex) {
+    roofTex = roofTexture();
+    roofTex.repeat.set(1, 6);
+    FM.roof.map = roofTex;
+    FM.roof.color.setHex(0xb9c2cc);
+  }
 
-  // 기둥(양쪽 긴 변, 10 m 간격)과 크레인 레일
-  for (let x = -l / 2; x <= l / 2 + 0.01; x += 10)
-    for (const z of [-w / 2, w / 2]) part(g, boxG(0.9, h, 0.9), FM.column, x, h / 2, z);
-  for (const z of [-w / 2 + 0.9, w / 2 - 0.9]) part(g, boxG(l, 0.8, 0.6), FM.steel, 0, railY - 0.4, z, false);
+  // 기둥: 뒤쪽 벽을 따라 10 m 간격. 열린 면에는 양 끝 모서리에만 둔다
+  // (2026-11-13 사용자: "철골 구조물이 화면을 가린다" — 열린 면의 기둥과 지붕 트러스를 없앰)
+  for (let x = -l / 2; x <= l / 2 + 0.01; x += 10) part(g, boxG(0.9, h, 0.9), FM.column, x, h / 2, back);
+  for (const sx of [-1, 1]) part(g, boxG(0.9, h, 0.9), FM.column, (sx * l) / 2, h / 2, -back);
+  // 천장 크레인 레일(크레인이 있는 건물만). 열린 면 쪽은 가늘게
+  if (crane) {
+    part(g, boxG(l, 0.8, 0.6), FM.steel, 0, railY - 0.4, back + open * 0.9, false);
+    part(g, boxG(l, 0.35, 0.35), FM.steel, 0, railY - 0.18, -back - open * 0.9, false);
+  }
 
   // 뒤쪽 긴 벽과 양 끝 벽(창 불빛). 열린 면 쪽 끝 벽은 아래 절반만 둬서 옆에서도 보이게 한다
-  const tex = windowTexture(Math.round(l / 3), Math.round(h / 4));
-  const wallMat = new THREE.MeshStandardMaterial({
-    color: 0xffffff,
-    map: tex,
-    emissive: 0xffffff,
-    emissiveMap: tex,
-    emissiveIntensity: 0.7,
-    roughness: 0.9,
-  });
+  const wallMat = sidingMaterial(Math.max(2, Math.round(l / 6)));
+  const endMat = sidingMaterial(Math.max(2, Math.round(w / 6)));
   part(g, boxG(l, h, 0.5), [wallMat, wallMat, FM.roof, FM.roof, wallMat, wallMat], 0, h / 2, back, false);
-  for (const sx of [-1, 1]) part(g, boxG(0.5, h, w), FM.wall, (sx * l) / 2, h / 2, 0, false);
+  for (const sx of [-1, 1]) part(g, boxG(0.5, h, w), [endMat, endMat, FM.roof, FM.roof, endMat, endMat], (sx * l) / 2, h / 2, 0, false);
 
-  // 지붕 트러스(10 m 간격)와 뒤쪽 절반만 덮는 지붕판
-  for (let x = -l / 2; x <= l / 2 + 0.01; x += 10) {
-    part(g, boxG(0.6, 0.9, w), FM.column, x, h + 0.45, 0, false);
-    part(g, boxG(0.4, 2.2, 0.4), FM.column, x, h + 1.1, 0, false);
-  }
-  part(g, boxG(l, 0.5, 0.5), FM.column, 0, h + 2.2, 0, false);
+  // 뒤쪽 절반만 덮는 지붕판과 그 아래 서까래(지붕이 있는 쪽에만)
+  for (let x = -l / 2; x <= l / 2 + 0.01; x += 10) part(g, boxG(0.5, 0.7, w / 2), FM.column, x, h + 0.35, back / 2, false);
   const roof = part(g, boxG(l + 1, 0.3, w / 2 + 0.5), FM.roof, 0, h + 1.2, back / 2 - (open * 0.25), false);
   roof.rotation.x = open * 0.1;
 
   // 천장 등(불빛만)과 점광원 2개
-  for (let x = -l / 2 + 10; x < l / 2; x += 20) part(g, boxG(3, 0.3, 1.2), FM.lamp, x, h - 0.6, 0, false);
+  for (let x = -l / 2 + 10; x < l / 2; x += 20) part(g, boxG(3, 0.3, 1.2), FM.lamp, x, h - 0.6, back / 2, false);
+  mergeStatic(g); // 기둥·트러스·레일·등을 재질별로 합침(건물 하나에 수십 번 → 몇 번)
   const lamps = (lights === 2 ? [-1, 1] : [0]).map((sx) => {
     const p = new THREE.PointLight(0xfff0d8, lights === 2 ? 2200 : 3000, 75, 2);
     p.position.set((sx * l) / 4, h - 3, 0);

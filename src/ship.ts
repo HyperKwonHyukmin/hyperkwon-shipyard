@@ -9,6 +9,7 @@
  * order 는 탑재 순서(3단계 애니메이션에서 이 순서로 올린다).
  */
 import * as THREE from 'three';
+import { mergeStatic } from './merge';
 
 export const SHIP = {
   beam: 32,
@@ -197,7 +198,8 @@ function houseTexture(windows: number) {
 }
 
 // ── 조립 ────────────────────────────────────────────────────
-export function buildBulkCarrier() {
+/** whole = true 면 배 전체를 재질별로 합친다(블록을 따로 다루지 않는 안벽·시운전·인도의 배). 아니면 블록 안에서만 합친다 */
+export function buildBulkCarrier(whole = false) {
   const ship = new THREE.Group();
   const blocks: Omit<Block, 'order'>[] = [];
   const block = (id: string, name: string) => {
@@ -350,5 +352,8 @@ export function buildBulkCarrier() {
     return { ...b, order: i + 1 };
   });
   if (ordered.length !== blocks.length) throw new Error('탑재 순서에 빠진 블록이 있음');
+  // 성능: 부재와 외곽선을 재질별로 합친다(부재마다 그리기 호출 2번이던 것을 블록당 재질 수만큼으로)
+  if (whole) mergeStatic(ship);
+  else for (const b of ordered) mergeStatic(b.object);
   return { ship, blocks: ordered };
 }

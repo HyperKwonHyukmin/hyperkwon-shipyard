@@ -23,6 +23,13 @@ import { createLaunch } from './launch';
 import { createQuay } from './quay';
 import { createTrial } from './trial';
 import { createDelivery } from './delivery';
+import { createHistory, ERAS } from './history';
+import { createDesign } from './design';
+import { createLift } from './lift';
+import { createLightPool } from './lightpool';
+import { mergeStatic } from './merge';
+import { createScenery, BACK_SHEDS } from './scenery';
+import { concreteTexture, shedWallTextures } from './textures';
 
 const DOCK = { length: 220, width: 48, depth: 14, gate: 8 };
 const HALF_L = DOCK.length / 2;
@@ -32,17 +39,51 @@ const CRANE_RAIL_Z = HALF_W + 8;
 
 const canvas = document.getElementById('scene') as HTMLCanvasElement;
 let renderer: THREE.WebGLRenderer;
+// ── 품질 단계(성능) ─────────────────────────────────────
+// 2026-11-13 실측: 그리기 호출을 줄여도 fps 가 안 올랐다 → 병목은 픽셀 계산(GPU). 느리면 픽셀당 일을 단계적으로 줄인다.
+//   0 전부 켬(해상도 1.5 까지, 부드러운 그림자, 하늘빛 반사)   1 해상도 1.0 까지   2 그림자 단순하게(1024)
+//   3 하늘빛 반사 끔   4 그림자 끔   5 해상도 0.75
+// 내려간 단계는 브라우저에 저장해 다음에 그 단계로 시작한다(매번 처음 몇 초 끊기지 않게). ?q=0~5 로 직접 정할 수 있다.
+const QUALITY_KEY = 'ulsan-story:quality';
+const QUALITY_MAX = 5;
+/** 그래픽 장치 이름(내장 그래픽이면 안티에일리어싱을 처음부터 끈다 — 픽셀당 비용이 가장 큰 항목이고 실행 중에는 못 바꿈) */
+const gpuName = (() => {
+  try {
+    const gl = document.createElement('canvas').getContext('webgl');
+    const ext = gl?.getExtension('WEBGL_debug_renderer_info');
+    return String((ext && gl?.getParameter(ext.UNMASKED_RENDERER_WEBGL)) || '');
+  } catch {
+    return '';
+  }
+})();
+// 'Radeon(TM) Graphics'(뒤에 모델 번호 없음)는 AMD 내장 그래픽이다(2026-11-13 사용자 집 PC)
+const weakGpu = /Intel|SwiftShader|Mali|Adreno|PowerVR|Basic Render|Radeon\(TM\) Graphics/i.test(gpuName);
+let quality = (() => {
+  const q = new URLSearchParams(location.search).get('q');
+  if (q !== null && /^[0-5]$/.test(q)) return Number(q);
+  try {
+    const saved = Number(localStorage.getItem(QUALITY_KEY));
+    if (Number.isInteger(saved) && saved >= 0 && saved <= QUALITY_MAX) return Math.max(saved, weakGpu ? 1 : 0);
+  } catch {
+    /* 저장이 막혀도 그대로 진행 */
+  }
+  return weakGpu ? 1 : 0;
+})();
+const useMsaa = !weakGpu && quality < 2;
 try {
-  renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: useMsaa, powerPreference: 'high-performance' });
 } catch {
   document.body.insertAdjacentHTML('beforeend', '<div class="error">이 브라우저에서는 3D 화면(WebGL)을 열 수 없습니다.</div>');
   throw new Error('WebGL unavailable');
 }
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+// 화면 해상도 배율은 품질 단계가 정한다(applyQuality)
+let pixelRatio = Math.min(window.devicePixelRatio, 1.5);
+renderer.setPixelRatio(pixelRatio);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.35;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.autoUpdate = false; // 그림자 그림은 두 프레임에 한 번만 새로 그린다(아래 반복문)
 
 const scene = new THREE.Scene();
 scene.fog = new THREE.FogExp2(0x0b1424, 0.0016);
@@ -58,8 +99,15 @@ controls.dampingFactor = 0.06;
 controls.minDistance = 15; // 장소마다 가까이 볼 수 있게
 controls.maxDistance = 900;
 controls.maxPolarAngle = Math.PI * 0.47;
-controls.autoRotate = !matchMedia('(prefers-reduced-motion: reduce)').matches;
-controls.autoRotateSpeed = 0.25;
+// 자동 회전은 기본으로 끄고 '회전' 버튼으로만 켠다(2026-11-13 사용자 요청)
+controls.autoRotate = false;
+controls.autoRotateSpeed = 0.6;
+// 조작(2026-11-13 사용자: "회전 중심이 어색하고 불편하다")
+// - 휠 확대는 마우스가 가리키는 곳으로(회전 중심도 그쪽으로 따라감)
+// - 옮기기(오른쪽 끌기)는 화면이 아니라 땅을 따라 → 회전 중심이 늘 땅 위에 있다
+// - 두 번 누르면 그 자리가 회전 중심(아래 dblclick)
+controls.zoomToCursor = true;
+controls.screenSpacePanning = false;
 // ?cam=x,y,z,tx,ty,tz — 시점을 고정해 캡처할 때(확인용). 자동 회전도 끈다.
 {
   const v = new URLSearchParams(location.search).get('cam')?.split(',').map(Number);
@@ -70,8 +118,14 @@ controls.autoRotateSpeed = 0.25;
     controls.autoRotate = false;
   }
 }
+const spinBtn = document.getElementById('spin');
+function setSpin(on: boolean) {
+  controls.autoRotate = on;
+  spinBtn?.setAttribute('aria-pressed', String(on));
+}
+spinBtn?.addEventListener('click', () => setSpin(!controls.autoRotate));
 controls.addEventListener('start', () => {
-  controls.autoRotate = false;
+  setSpin(false);
   const hint = document.getElementById('hint');
   if (hint) hint.style.opacity = '0';
 });
@@ -91,7 +145,7 @@ const mat = {
   red: new THREE.MeshStandardMaterial({ color: 0xff2a1a, emissive: 0xff2a1a, emissiveIntensity: 2 }),
 };
 
-function box(w: number, h: number, d: number, m: THREE.Material, x: number, y: number, z: number, shadow = true) {
+function box(w: number, h: number, d: number, m: THREE.Material | THREE.Material[], x: number, y: number, z: number, shadow = true) {
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
   mesh.position.set(x, y, z);
   mesh.castShadow = shadow;
@@ -116,8 +170,13 @@ const BASE = -DOCK.depth - 2;
 const H = -BASE;
 const FAR = 1800;
 
+// 야드 바닥: 콘크리트 슬래브 질감(한 장 20 m)을 상자 크기에 맞춰 반복
+const groundTex = concreteTexture();
 function quay(x0: number, x1: number, z0: number, z1: number) {
-  box(x1 - x0, H, z1 - z0, mat.apron, (x0 + x1) / 2, BASE / 2, (z0 + z1) / 2, false);
+  const tex = groundTex.clone();
+  tex.repeat.set((x1 - x0) / 20, (z1 - z0) / 20);
+  const top = new THREE.MeshStandardMaterial({ map: tex, color: 0xa4a8ad, roughness: 0.95 });
+  box(x1 - x0, H, z1 - z0, [mat.apron, mat.apron, top, mat.apron, mat.apron, mat.apron], (x0 + x1) / 2, BASE / 2, (z0 + z1) / 2, false);
 }
 const X_SEA = HALF_L + DOCK.gate;
 quay(-FAR, X_SEA, -FAR, -HALF_W); // 왼쪽 안벽
@@ -279,7 +338,16 @@ scene.add(hemi);
 const nightOnly: THREE.Object3D[] = [];
 const moon = new THREE.DirectionalLight(0x9fb4e0, 0.9);
 moon.position.set(300, 400, -200);
-scene.add(moon);
+// 그림자는 해·달 하나만 만든다. 그림자 범위(±230 m)는 보는 곳을 따라 옮긴다(아래 반복문)
+moon.castShadow = true;
+moon.shadow.mapSize.set(2048, 2048);
+moon.shadow.camera.left = moon.shadow.camera.bottom = -230;
+moon.shadow.camera.right = moon.shadow.camera.top = 230;
+moon.shadow.camera.near = 50;
+moon.shadow.camera.far = 1200;
+moon.shadow.bias = -0.0004;
+moon.shadow.normalBias = 0.6;
+scene.add(moon, moon.target);
 
 // 투광등 탑 4개(두 개만 그림자) — 나트륨등 같은 따뜻한 색
 const towers: [number, number, boolean][] = [
@@ -299,13 +367,7 @@ for (const [x, side, shadow] of towers) {
   const spot = new THREE.SpotLight(0xffc98a, 9000, 260, Math.PI / 4.2, 0.55, 2);
   spot.position.set(x, 38, z);
   spot.target.position.set(x + 10, -DOCK.depth, 0);
-  if (shadow) {
-    spot.castShadow = true;
-    spot.shadow.mapSize.set(1024, 1024);
-    spot.shadow.camera.near = 10;
-    spot.shadow.camera.far = 220;
-    spot.shadow.bias = -0.0005;
-  }
+  void shadow; // 그림자는 해·달이 맡는다(lightpool.ts)
   scene.add(spot, spot.target);
   // 안개 속에서 보이는 빛줄기(실제 조명보다 좁게 그려야 자연스럽다)
   const beam = lightBeam(new THREE.Vector3(x, 37.8, z - side * 0.8), spot.target.position, 0.3, 0xffc98a);
@@ -319,6 +381,11 @@ for (let x = -HALF_L + 25; x < HALF_L; x += 50)
     p.position.set(x, -DOCK.depth + 6, z);
     scene.add(p);
   }
+
+// 성능: 여기까지 장면에 바로 붙인 움직이지 않는 것(도크 벽·난간·계선주·레일·투광등 기둥)과 크레인 몸체를 재질별로 합친다.
+// 게이트·트롤리·훅은 그룹이라 건드리지 않는다
+mergeStatic(scene, false);
+mergeStatic(crane, false);
 
 // ── 배 ────────────────────────────────────────────────────
 // 반목 위에 앉힌다. 빈 도크에서 시작해 크레인이 블록을 하나씩 탑재한다.
@@ -387,7 +454,6 @@ const factories: Record<string, { update: (machineDt: number, dt: number) => voi
   pe: createPE(scene, stationAt('pe')),
   paint: createPaint(scene, stationAt('paint')),
 };
-const NEAR = 260;
 // 공장 사이 도로를 오가는 트랜스포터(블록 흐름)
 const traffic = createTraffic(scene, STATIONS);
 // ── 진수(P3-1): 탑재가 끝나면 물 채우기 → 게이트 열기 → 예인선 ──
@@ -415,12 +481,20 @@ factories.quay = createQuay(scene, stationAt('quay'), { seaY: SEA_Y, draft: 7 })
 factories.trial = createTrial(scene, { seaY: SEA_Y, draft: 7 });
 // ── 명명식과 인도(P3-4): 병 깨기, 오색 종이, 뱃고동, 선주 깃발, 첫 항해 ──
 factories.delivery = createDelivery(scene, stationAt('delivery'), { seaY: SEA_Y, draft: 7, onHorn: () => sound.horn() });
-function updateFactories(machineDt: number, dt: number) {
-  for (const [id, f] of Object.entries(factories)) {
-    const [x, , z] = stationAt(id);
-    if (Math.hypot(controls.target.x - x, controls.target.z - z) < NEAR) f.update(machineDt, dt);
-  }
+// ── 역사관(P4-1): 미포만 모형이 1972 → 1974 → 지금으로 바뀜 ──
+const historyHall = createHistory(scene, stationAt('gate'));
+factories.gate = historyHall;
+// ── 설계동(P4-2): 수조의 배 모형으로 선체 거더 종굽힘 체험 ──
+const designExp = createDesign(scene, [stationAt('design')[0], 0, 33]);
+factories.design = designExp;
+// ── 블록 인양 학습(P4-3): 도크 옆 빈 땅의 문형 크레인 ──
+const liftLab = createLift(scene, [-30, 0, 80]);
+/** 지금 보는 장소만 움직인다(다른 장소는 멈춰 있다가 돌아오면 이어서). 2026-11-13 사용자: "모든 곳이 계속 움직이는 건 낭비" */
+function updateFactories(id: string, machineDt: number, dt: number) {
+  factories[id]?.update(machineDt, dt);
 }
+/** 도로 트랜스포터가 보이는 장소(정문 ~ 도크) */
+const ROAD_STATIONS = new Set(['gate', 'design', 'cutting', 'assembly', 'pe', 'paint', 'dock']);
 /** 건조 시점 막대 옆 글: 지금까지 앉은 블록 수와 단계 이름 */
 function updateTimelineLabel(n: number) {
   const out = document.getElementById('tl-out');
@@ -437,6 +511,19 @@ const tour = createTour({
   renderExtra: (s, el) => {
     if (factories[s.id]) {
       el.innerHTML = '<p class="live"><span>지금</span> <output id="live"></output></p>';
+      if (s.id === 'gate') {
+        // 모형의 시점 고르기(누르면 자동 순환을 멈춤)
+        el.insertAdjacentHTML(
+          'beforeend',
+          `<div class="eras" role="group" aria-label="모형 시점">${ERAS.map(
+            (e, i) => `<button class="btn" type="button" data-era="${i}" aria-pressed="${i === historyHall.era}">${e.label}</button>`,
+          ).join('')}</div>`,
+        );
+        const btns = [...el.querySelectorAll<HTMLButtonElement>('[data-era]')];
+        btns.forEach((b) => b.addEventListener('click', () => historyHall.setEra(Number(b.dataset.era), true)));
+        historyHall.onEra((e) => btns.forEach((b, i) => b.setAttribute('aria-pressed', String(i === e))));
+      }
+      if (s.id === 'design') designExp.renderPanel(el);
       if (s.id === 'launch') {
         // 탑재를 다 기다리지 않고 진수를 보는 버튼(×1 로 26개를 쌓으면 17분쯤 걸림)
         el.insertAdjacentHTML('beforeend', '<button class="btn primary" id="launch-now" type="button">진수 바로 보기</button>');
@@ -452,6 +539,7 @@ const tour = createTour({
       <input type="range" id="tl" min="0" max="${blocks.length}" step="1" value="${erection.placed()}"></label>
       <div class="tl-marks"><span>착공</span><span>이중저</span><span>측벽</span><span>갑판</span><span>완성</span></div>`;
     const tl = el.querySelector('#tl') as HTMLInputElement;
+    liftLab.renderPanel(el, () => tour.flyTo(liftLab.view.cam, liftLab.view.look));
     tl.addEventListener('input', () => updateTimelineLabel(Number(tl.value)));
     tl.addEventListener('change', () => {
       launch.abort();
@@ -460,6 +548,22 @@ const tour = createTour({
     updateTimelineLabel(erection.placed());
   },
 });
+// 두 번 누른 땅 위의 점을 회전 중심으로(카메라는 같은 만큼 따라 옮겨 보는 각도를 지킨다)
+{
+  const ray = new THREE.Raycaster();
+  const ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  const hit = new THREE.Vector3();
+  canvas.addEventListener('dblclick', (e) => {
+    const r = canvas.getBoundingClientRect();
+    ray.setFromCamera(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), camera);
+    if (!ray.ray.intersectPlane(ground, hit)) return;
+    const d = hit.clone().sub(controls.target);
+    const cam = camera.position.clone().add(d);
+    tour.flyTo([cam.x, cam.y, cam.z], [hit.x, hit.y, hit.z], 0.6);
+  });
+  // 전체 보기: 정문에서 안벽까지 한눈에
+  document.getElementById('overview')?.addEventListener('click', () => tour.flyTo([-470, 430, 560], [-230, 0, 40]));
+}
 // ?t=초: 애니메이션을 그만큼 미리 진행(특정 순간을 캡처할 때)
 {
   const warm = Number(params.get('t'));
@@ -475,15 +579,28 @@ const tour = createTour({
 
 // ── 바다 ──────────────────────────────────────────────────
 const sea = new THREE.Mesh(
-  new THREE.PlaneGeometry(4000, 4000, 160, 160),
+  new THREE.PlaneGeometry(4000, 4000, 128, 128),
   new THREE.MeshStandardMaterial({ color: 0x16324f, roughness: 0.2, metalness: 0.3 }),
 );
 sea.rotation.x = -Math.PI / 2;
 sea.position.set(X_SEA + 2000, SEA_Y, 0);
 sea.receiveShadow = true;
 scene.add(sea);
-const seaPos = sea.geometry.attributes.position as THREE.BufferAttribute;
-const seaBase = Float32Array.from(seaPos.array as Float32Array);
+// 파도는 꼭짓점 셰이더에서 만든다(매 프레임 CPU 로 꼭짓점 2만여 개와 법선을 다시 계산하던 것을 없앰)
+const seaTime = { value: 0 };
+(sea.material as THREE.MeshStandardMaterial).onBeforeCompile = (sh) => {
+  sh.uniforms.uTime = seaTime;
+  sh.vertexShader =
+    'uniform float uTime;\n' +
+    sh.vertexShader
+      .replace(
+        '#include <beginnormal_vertex>',
+        `float wx = position.x * 0.05 + uTime * 0.9;
+         float wy = position.y * 0.07 + uTime * 1.3;
+         vec3 objectNormal = normalize(vec3(-0.0175 * cos(wx), -0.0175 * cos(wy), 1.0));`,
+      )
+      .replace('#include <begin_vertex>', 'vec3 transformed = vec3(position.xy, position.z + sin(wx) * 0.35 + sin(wy) * 0.25);');
+};
 
 // ── 배경: 공장 건물, 먼 불빛, 별 ────────────────────────────
 function windowTexture(cols: number, rows: number) {
@@ -505,18 +622,27 @@ function windowTexture(cols: number, rows: number) {
   return t;
 }
 // 배경 공장(장소 건물은 yard.ts). 장소 시야를 가리지 않게 도로에서 먼 곳에만 둔다
-const sheds: [number, number, number, number, number][] = [
-  // x, z, 길이, 높이, 폭
-  [-230, -140, 100, 30, 40],
-  [-60, -150, 70, 22, 36],
-];
+// 높이는 순서대로 30, 22, 22. 자리는 scenery.ts 의 BACK_SHEDS(적치 블록이 피해 가는 자리와 같은 값)
+const sheds: [number, number, number, number, number][] = BACK_SHEDS.map(([x, z, l, w], i) => [x, z, l, i === 0 ? 30 : 22, w]);
 for (const [x, z, l, h, w] of sheds) {
-  const tex = windowTexture(Math.round(l / 3), Math.round(h / 4));
-  const side = new THREE.MeshStandardMaterial({ color: 0xffffff, map: tex, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 0.9, roughness: 0.9 });
-  const mesh = new THREE.Mesh(new THREE.BoxGeometry(l, h, w), [side, side, mat.apron, mat.apron, side, side]);
+  // 골강판 벽 + 박공지붕
+  const wall = (cols: number) => {
+    const t = shedWallTextures(cols, '#7a8794');
+    return new THREE.MeshStandardMaterial({ map: t.map, emissive: 0xffffff, emissiveMap: t.emissive, emissiveIntensity: 0.9, roughness: 0.6, metalness: 0.35 });
+  };
+  const long = wall(Math.round(l / 6));
+  const short = wall(Math.round(w / 6));
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(l, h, w), [short, short, mat.apron, mat.apron, long, long]);
   mesh.position.set(x, h / 2, z);
-  mesh.castShadow = true;
+  mesh.castShadow = mesh.receiveShadow = true;
   scene.add(mesh);
+  const roof = new THREE.Mesh(new THREE.CylinderGeometry(w * 0.58, w * 0.58, l + 2, 3, 1), new THREE.MeshStandardMaterial({ color: 0x5f6b78, roughness: 0.6, metalness: 0.4, flatShading: true }));
+  roof.rotation.z = Math.PI / 2;
+  roof.rotation.y = 0;
+  roof.scale.set(0.42, 1, 1);
+  roof.position.set(x, h + w * 0.58 * 0.21 - 0.05, z);
+  roof.castShadow = true;
+  scene.add(roof);
 }
 {
   // 수평선 너머 도시 불빛
@@ -566,6 +692,10 @@ function skyTexture() {
   return t;
 }
 
+// ── 풍경(디자인 고도화): 하늘빛 반사, 먼 산, 구름, 블록 적치장, 나무 ──
+const scenery = createScenery(scene, renderer, STATIONS);
+// ── 조명 묶음(성능): 장소들이 만든 조명 20여 개를 고정 8개로 돌려 쓴다 ──
+const lightPool = createLightPool(scene);
 // ── 낮 / 밤 ─────────────────────────────────────────────
 const dayNight = createDayNight({
   scene,
@@ -582,11 +712,19 @@ function timeLabel() {
   timeBtn.textContent = dayNight.mode === 'day' ? '밤으로' : '낮으로';
   timeBtn.setAttribute('aria-label', dayNight.mode === 'day' ? '밤 장면으로 바꾸기' : '낮 장면으로 바꾸기');
 }
+/** 해·달이 비추는 방향(낮/밤 전환이 정한 위치를 원점 기준 방향으로 기억) */
+const sunOffset = new THREE.Vector3();
+function timeChanged() {
+  sunOffset.copy(moon.position).normalize().multiplyScalar(600);
+  lightPool.setNight(dayNight.mode === 'night');
+  scenery.setDay(dayNight.mode === 'day');
+  timeLabel();
+}
 timeBtn?.addEventListener('click', () => {
   dayNight.toggle();
-  timeLabel();
+  timeChanged();
 });
-timeLabel();
+timeChanged();
 
 // ── 화면 크기·반복 ────────────────────────────────────────
 function resize() {
@@ -599,32 +737,81 @@ function resize() {
 window.addEventListener('resize', resize);
 resize();
 
+// ?stats: 성능 숫자(초당 프레임, 프레임당 계산 시간, 그리기 호출, 삼각형, 조명 수)를 화면 왼쪽 아래에
+const statsEl = params.has('stats') ? document.body.appendChild(Object.assign(document.createElement('pre'), { id: 'stats' })) : null;
+if (statsEl) statsEl.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:50;margin:0;padding:6px 8px;background:rgba(0,0,0,.7);color:#9f9;font:12px/1.4 monospace;pointer-events:none';
+const stat = { frames: 0, js: 0, render: 0, since: performance.now() };
+
 const clock = new THREE.Clock();
 const tmp = new THREE.Vector3();
+const shadowAt = new THREE.Vector3();
+const slow = { sum: 0, n: 0 };
+let qualityHold = 0;
+/** 품질 단계를 적용한다(위 표). 단계가 높을수록 앞 단계의 것을 모두 포함 */
+function applyQuality(level: number) {
+  quality = level;
+  pixelRatio = level >= 5 ? 0.75 : Math.min(window.devicePixelRatio, level >= 1 ? 1 : 1.5);
+  renderer.setPixelRatio(pixelRatio);
+  resize();
+  const type = level >= 2 ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
+  const size = level >= 2 ? 1024 : 2048;
+  let recompile = false;
+  if (renderer.shadowMap.type !== type) {
+    renderer.shadowMap.type = type;
+    recompile = true;
+  }
+  if (moon.shadow.mapSize.x !== size) {
+    moon.shadow.mapSize.set(size, size);
+    moon.shadow.map?.dispose();
+    moon.shadow.map = null;
+  }
+  moon.castShadow = level < 4;
+  scenery.setReflection(level < 3);
+  if (recompile)
+    scene.traverse((o) => {
+      const m = (o as THREE.Mesh).material;
+      for (const x of Array.isArray(m) ? m : m ? [m] : []) x.needsUpdate = true;
+    });
+  try {
+    localStorage.setItem(QUALITY_KEY, String(level));
+  } catch {
+    /* 저장이 막혀도 그대로 */
+  }
+}
+applyQuality(quality);
+let frameNo = 0;
 let lastCraneX = crane.position.x;
 let lastHook = getHookPoint();
 let liveTimer = 0;
 renderer.setAnimationLoop(() => {
-  const dt = Math.min(clock.getDelta(), 0.1); // 탭을 오래 비웠다 돌아와도 한 번에 건너뛰지 않게
+  const tFrame = performance.now();
+  const rawDt = clock.getDelta();
+  const dt = Math.min(rawDt, 0.1); // 탭을 오래 비웠다 돌아와도 한 번에 건너뛰지 않게
   const t = clock.elapsedTime;
+  const here = STATIONS[tour.current]?.id ?? 'dock';
+  const atDock = here === 'dock' || here === 'launch';
   if (!still) {
-    erection.update(dt * speed);
-    welding.update(dt);
-  }
-  if (!still) {
-    updateFactories(dt * speed, dt);
-    traffic.update(dt * speed);
-    launch.update(dt * speed);
+    // 도크의 탑재·용접·진수는 도크와 진수 장소에서만 진행
+    if (atDock) {
+      erection.update(dt * speed);
+      welding.update(dt);
+      launch.update(dt * speed);
+    }
+    updateFactories(here, dt * speed, dt);
+    if (ROAD_STATIONS.has(here)) traffic.update(dt * speed);
   }
   liveTimer -= dt;
   if (liveTimer <= 0) {
     liveTimer = 0.3;
     if (launch.active && hudStatus) hudStatus.textContent = `도크: 진수 — ${launch.status()}`;
+    // 장소를 옮기면 둘러보기가 자동 회전을 끄므로 버튼 표시를 맞춘다
+    if (spinBtn && spinBtn.getAttribute('aria-pressed') !== String(controls.autoRotate)) spinBtn.setAttribute('aria-pressed', String(controls.autoRotate));
     const live = document.getElementById('live');
     const f = factories[STATIONS[tour.current]?.id];
     if (live && f) live.textContent = f.status();
   }
-  fog.update(dt, t);
+  if (atDock) liftLab.update(dt);
+  if (dayNight.mode === 'night') fog.update(dt, t);
   tour.update(dt);
   yard.fadeLabels(camera.position, tour.current);
   // 소리: 크레인이 움직이는 빠르기와 용접 아크까지의 거리로 크기를 정한다
@@ -639,19 +826,50 @@ renderer.setAnimationLoop(() => {
   }
   lastCraneX = crane.position.x;
   lastHook = getHookPoint();
-  // 잔잔한 파도
-  const arr = seaPos.array as Float32Array;
-  for (let i = 0; i < arr.length; i += 3) {
-    const x = seaBase[i];
-    const y = seaBase[i + 1];
-    arr[i + 2] = Math.sin(x * 0.05 + t * 0.9) * 0.35 + Math.sin(y * 0.07 + t * 1.3) * 0.25;
-  }
-  seaPos.needsUpdate = true;
-  sea.geometry.computeVertexNormals();
+  seaTime.value = t; // 잔잔한 파도(셰이더)
   // 장애등 깜빡임
   mat.red.emissiveIntensity = Math.sin(t * 2.4) > 0.2 ? 2.4 : 0.15;
   // 훅이 바람에 살짝 흔들림
   hook.rotation.z = Math.sin(t * 0.7) * 0.02;
   controls.update();
+  // 그림자 범위와 조명 묶음을 보는 곳으로. 그림자는 8 m 단위로만 옮겨 가장자리가 일렁이지 않게
+  shadowAt.set(Math.round(controls.target.x / 8) * 8, 0, Math.round(controls.target.z / 8) * 8);
+  moon.target.position.copy(shadowAt);
+  moon.position.copy(shadowAt).add(sunOffset);
+  lightPool.update(controls.target);
+  if (++frameNo % 2 === 0) renderer.shadowMap.needsUpdate = true;
+  // 느리면 품질을 한 단계 낮춘다: 최근 90프레임 평균이 22 ms(약 45fps)보다 길면. 다시 올리지는 않는다(오르내림 방지).
+  // 탭이 가려져 있을 때와 단계를 바꾼 직후(셰이더를 다시 만드는 동안)는 재지 않는다
+  if (t > 3 && !document.hidden && t > qualityHold) {
+    slow.sum += rawDt;
+    if (++slow.n >= 90) {
+      if (slow.sum / slow.n > 0.022 && quality < QUALITY_MAX && !params.has('q')) {
+        applyQuality(quality + 1);
+        qualityHold = t + 2;
+      }
+      slow.sum = slow.n = 0;
+    }
+  }
+  const tRender = performance.now();
   renderer.render(scene, camera);
+  if (statsEl) {
+    const now = performance.now();
+    stat.frames++;
+    stat.js += tRender - tFrame;
+    stat.render += now - tRender;
+    if (now - stat.since >= 1000) {
+      let lights = 0;
+      let meshes = 0;
+      scene.traverseVisible((o) => {
+        if ((o as THREE.Light).isLight && (o as THREE.Light).intensity > 0) lights++;
+        if ((o as THREE.Mesh).isMesh) meshes++;
+      });
+      const i = renderer.info;
+      statsEl.textContent = `fps ${((stat.frames * 1000) / (now - stat.since)).toFixed(0)} · 계산 ${(stat.js / stat.frames).toFixed(1)} ms · 그리기 ${(stat.render / stat.frames).toFixed(1)} ms
+품질 ${quality}${useMsaa ? ' +AA' : ''} · 배율 ${pixelRatio} · ${gpuName.slice(0, 60)}
+호출 ${i.render.calls} · 삼각형 ${i.render.triangles} · 조명 ${lights} · 메시 ${meshes} · 프로그램 ${i.programs?.length ?? 0}`;
+      stat.frames = stat.js = stat.render = 0;
+      stat.since = now;
+    }
+  }
 });

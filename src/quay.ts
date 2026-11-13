@@ -54,7 +54,7 @@ export function createQuay(scene: THREE.Scene, at: [number, number, number], o: 
   scene.add(root);
 
   // ── 배 ──
-  const { ship } = buildBulkCarrier();
+  const { ship } = buildBulkCarrier(true);
   root.add(ship);
   // 계류 위치, 계류줄, 예인선은 공용(berth.ts). 배는 부두의 -z 쪽
   const berth = createBerth(root, ship, { ax, az, d: -1, seaY: o.seaY, draft: o.draft });

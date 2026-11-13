@@ -118,7 +118,7 @@ export function createDelivery(scene: THREE.Scene, at: [number, number, number],
   scene.add(root);
 
   // ── 배: 뱃머리를 -x(육지 쪽)로. 만선기를 단 채 들어온다 ──
-  const { ship } = buildBulkCarrier();
+  const { ship } = buildBulkCarrier(true);
   root.add(ship);
   dressingFlags(ship);
   const berth = createBerth(root, ship, { ax, az, d: 1, seaY: o.seaY, draft: o.draft });

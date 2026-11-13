@@ -33,10 +33,10 @@ function puffTexture() {
  */
 export function createFog(scene: THREE.Scene) {
   const tex = puffTexture();
-  const AREA = { x0: -740, x1: 460, z0: -240, z1: 240 }; // 장소 전체(정문~안벽)를 덮음
+  const AREA = { x0: -740, x1: 460, z0: -300, z1: 330 }; // 장소 전체(정문~안벽)를 덮음
   const geo = new THREE.PlaneGeometry(1, 1);
   geo.rotateX(-Math.PI / 2);
-  const puffs = Array.from({ length: 60 }, () => {
+  const puffs = Array.from({ length: 32 }, () => {
     const m = new THREE.MeshBasicMaterial({
       map: tex,
       color: 0x93a4bd,

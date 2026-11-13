@@ -2,16 +2,15 @@
  * P2-5 블록 흐름 연결(가벼운 연결, 2026-11-13 사용자 결정).
  * 장소의 out 흐름마다 트랜스포터 한 대가 도로를 따라 오간다: 출발 장소 앞 → 도로 차선 → 도착 장소 앞(도크는 도크 뒤 적치장 앞).
  * 공장 안 순환과 시간을 맞추지는 않는다(흐름이 이어진다는 것만 보여 줌). 블록 기록(생애주기)은 만들지 않는다.
- * 좌표: 도로는 z = 0 을 따라 x 로 뻗고 반폭 20. +x 로 가는 차는 z = -7 차선, -x 로 가는 차는 z = +7 차선.
+ * 경로는 layout.ts 의 도로망에서 나온다(가운데 선을 진행 방향 오른쪽 차선으로 6 m 옮김).
  */
 import * as THREE from 'three';
 import type { Station } from './content/stations';
+import { routeBetween } from './layout';
 
 const SPEED = 9; // m/s
-const EDGE = 26; // 장소 앞(도로 가장자리 밖) z 거리
-const LANE = 7;
+const LANE = 6;
 const DECK = 2.0;
-const DOCK_END_X = -205; // 도크로 가는 차는 도크 뒤 적치장 앞에서 멈춘다
 
 function std(color: number, roughness = 0.7, metalness = 0.2) {
   return new THREE.MeshStandardMaterial({ color, roughness, metalness });
@@ -96,16 +95,31 @@ export function createTraffic(scene: THREE.Scene, stations: Station[]) {
       if (f.dir !== 'out') continue;
       const to = byId.get(f.to);
       if (!to) continue;
-      const [x0, , z0] = s.at;
       const toDock = f.to === 'dock';
-      const x1 = toDock ? DOCK_END_X : to.at[0];
-      const lane = x1 > x0 ? -LANE : LANE;
-      const pts = [
-        new THREE.Vector3(x0, 0, Math.sign(z0) * EDGE),
-        new THREE.Vector3(x0, 0, lane),
-        new THREE.Vector3(x1, 0, lane),
-        new THREE.Vector3(x1, 0, toDock ? lane : Math.sign(to.at[2]) * EDGE),
-      ];
+      // 길 가운데 선 경로(layout.ts)를 진행 방향 오른쪽 차선으로 옮긴다. 처음과 끝(장소 앞)은 그대로
+      const path = routeBetween(s.at, toDock ? null : to.at);
+      const lastRoad = toDock ? path.length - 1 : path.length - 2; // 길 위에 있는 마지막 점
+      const normal = (i: number): [number, number] | null => {
+        // i 번째 구간(path[i] → path[i+1])의 오른쪽 방향. 길 위 구간만
+        if (i < 1 || i + 1 > lastRoad) return null;
+        const dx = path[i + 1][0] - path[i][0];
+        const dz = path[i + 1][1] - path[i][1];
+        const len = Math.hypot(dx, dz);
+        return len < 0.01 ? null : [dz / len, -dx / len];
+      };
+      const pts = path.map(([x, z], j) => {
+        if (j < 1 || j > lastRoad) return new THREE.Vector3(x, 0, z);
+        const n0 = normal(j - 1);
+        const n1 = normal(j);
+        let ox = (n0?.[0] ?? 0) + (n1?.[0] ?? 0);
+        let oz = (n0?.[1] ?? 0) + (n1?.[1] ?? 0);
+        // 같은 방향 구간 둘이 만나면 한 번만
+        if (n0 && n1 && Math.abs(n0[0] - n1[0]) + Math.abs(n0[1] - n1[1]) < 0.01) {
+          ox = n0[0];
+          oz = n0[1];
+        }
+        return new THREE.Vector3(x + ox * LANE, 0, z + oz * LANE);
+      });
       const acc = [0];
       for (let i = 1; i < pts.length; i++) acc.push(acc[i - 1] + pts[i].distanceTo(pts[i - 1]));
       const obj = truck();

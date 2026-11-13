@@ -57,6 +57,31 @@
       .facts a { font-size: 12px; white-space: nowrap; }
 
       .live { margin: 4px 0 10px; padding: 8px 10px; border-left: 3px solid var(--heritage); background: rgba(255,255,255,.05); font-size: 13px; }
+      .bm-h { margin: 6px 0 4px; font-size: 12px; color: var(--heritage); font-weight: 700; }
+      .bm .eras .btn { font-size: 12px; padding: 8px 6px; }
+      .bm-chart { display: block; width: 100%; margin: 8px 0 2px; }
+      .bm-figs { display: flex; gap: 10px; align-items: center; }
+      .bm-sec { flex: 0 0 140px; }
+      .bm svg text { fill: #c9d6e8; font-size: 12px; }
+      .bm svg text.small { font-size: 11px; }
+      .bm svg .axis { stroke: rgba(255,255,255,.35); stroke-width: 1; }
+      .bm svg .na { stroke: rgba(255,255,255,.5); stroke-dasharray: 3 2; }
+      .bm svg .hull { fill: none; stroke: #c9d6e8; stroke-width: 2; }
+      #bm-curve { fill: rgba(0,173,29,.25); stroke: var(--heritage); stroke-width: 2; }
+      #sec-dist { fill: rgba(233,237,241,.25); stroke: #e9edf1; stroke-width: 1; }
+      .bm-legend { margin: 2px 0; font-size: 11px; line-height: 1.5; color: #c9d6e8; }
+      .bm-legend span { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin: 0 4px 0 6px; vertical-align: -1px; }
+      .bm-legend .t { background: #c0262d; } .bm-legend .c { background: #1f5fae; }
+      .bm-warn { margin: 6px 0 0; padding: 6px 8px; border-left: 3px solid #e0b020; background: rgba(224,176,32,.12); font-size: 12px; }
+      .lf { margin-top: 14px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.15); }
+      .lf h3 { margin: 0 0 6px; font-size: 14px; }
+      .lf-p { margin: 0 0 8px; font-size: 13px; }
+      .lf #lf-focus { margin-bottom: 8px; }
+      .lf-t { width: 100%; border-collapse: collapse; font-size: 12px; margin: 6px 0; }
+      .lf-t th { text-align: left; font-weight: 500; color: #c9d6e8; padding: 3px 0; }
+      .lf-t td { text-align: right; font-weight: 700; white-space: nowrap; padding: 3px 0 3px 8px; }
+      .eras { display: flex; gap: 6px; margin: 0 0 10px; }
+      .eras .btn { flex: 1; }
       .live span { color: var(--heritage); font-weight: 700; }
       .flow { margin: 0 0 10px; }
       .flow h3 { margin: 0 0 4px !important; }
@@ -124,6 +149,8 @@
       <button class="btn" id="time" type="button">밤으로</button>
       <button class="btn" id="sound" type="button" aria-pressed="false">소리 켜기</button>
       <button class="btn" id="speed" type="button" aria-label="진행 속도">×1</button>
+      <button class="btn" id="spin" type="button" aria-pressed="false" aria-label="화면 자동 회전">회전</button>
+      <button class="btn" id="overview" type="button" aria-label="조선소 전체 보기">전체</button>
     </div>
     <aside class="panel" id="panel" aria-label="장소 설명">
       <div class="panel-head">
@@ -150,7 +177,7 @@
         <header><h2>조선소 지도</h2><button class="btn" id="map-close" type="button">닫기</button></header>
         <svg id="map-svg" xmlns="http://www.w3.org/2000/svg"></svg>
         <ol class="map-list" id="map-list"></ol>
-        <p class="map-hint">배치는 공정 순서대로 둘러보기 좋게 줄인 것으로, 실제 조선소 배치와 다릅니다. 화면을 끌어서 돌리고, 휠이나 두 손가락으로 확대합니다. ←/→ 키로도 이동합니다.</p>
+        <p class="map-hint">배치는 공정 순서대로 둘러보기 좋게 줄인 것으로, 실제 조선소 배치와 다릅니다. 화면을 끌면 돌고, 오른쪽 단추로 끌면 땅을 따라 옮겨지고, 휠은 마우스가 가리키는 곳으로 확대합니다. 두 번 누르면 그곳이 회전 중심이 됩니다. ←/→ 키로도 이동합니다.</p>
       </div>
     </div>
     <p class="disclaimer">HD현대중공업과 관계없는 비공식 개인 프로젝트입니다. 공개 자료를 바탕으로 했습니다.</p>

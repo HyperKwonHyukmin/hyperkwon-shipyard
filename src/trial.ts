@@ -23,7 +23,7 @@ const DEG = Math.PI / 180;
 export function createTrial(scene: THREE.Scene, o: Options) {
   const root = new THREE.Group();
   scene.add(root);
-  const { ship } = buildBulkCarrier();
+  const { ship } = buildBulkCarrier(true);
   ship.rotation.order = 'YXZ';
   root.add(ship);
   const keelY = o.seaY - o.draft;

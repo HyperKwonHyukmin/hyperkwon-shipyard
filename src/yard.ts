@@ -5,6 +5,8 @@
  */
 import * as THREE from 'three';
 import type { Station } from './content/stations';
+import { officeTextures, roadTexture, crosswalkTexture } from './textures';
+import { ROADS, FOOTPRINT, doorOf, onRoad } from './layout';
 
 const ROAD_HALF = 20; // 중앙 도로 반폭(트랜스포터가 지나는 길)
 
@@ -16,6 +18,12 @@ const M = {
   line: new THREE.MeshStandardMaterial({ color: 0xc9b25a, emissive: 0x6b5a1e, emissiveIntensity: 0.6 }),
   plate: std(0x3a4049, 0.9),
   roof: std(0x5b6470, 0.7, 0.3),
+  roofFlat: std(0x4b5058, 0.9),
+  plinth: std(0x5c6066, 0.9),
+  trim: std(0xc9cdd2, 0.7),
+  curb: std(0xa9adb2, 0.9),
+  barrier: new THREE.MeshStandardMaterial({ color: 0xd8342a, roughness: 0.6 }),
+  glass: new THREE.MeshStandardMaterial({ color: 0x35536e, roughness: 0.15, metalness: 0.6 }),
   pier: std(0x55595f, 0.9),
   steel: std(0x3a3f46, 0.6, 0.6),
   lamp: new THREE.MeshStandardMaterial({ color: 0xfff1d0, emissive: 0xffd9a0, emissiveIntensity: 2.5 }),
@@ -24,41 +32,48 @@ const M = {
   buoyWhite: std(0xdedcd2, 0.6),
 };
 
-function windowTexture(cols: number, rows: number) {
-  const c = document.createElement('canvas');
-  c.width = cols * 8;
-  c.height = rows * 12;
-  const g = c.getContext('2d')!;
-  g.fillStyle = '#2b3038';
-  g.fillRect(0, 0, c.width, c.height);
-  for (let i = 0; i < cols; i++)
-    for (let j = 0; j < rows; j++) {
-      if (Math.random() < 0.4) continue;
-      g.fillStyle = Math.random() < 0.8 ? '#ffd58a' : '#bfe0ff';
-      g.globalAlpha = 0.45 + Math.random() * 0.5;
-      g.fillRect(i * 8 + 2, j * 12 + 3, 4, 6);
-    }
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
-}
-
-/** 창 불빛이 있는 공장 건물. 길이 x, 높이 h, 폭 z */
-function building(x: number, z: number, l: number, h: number, w: number) {
-  const tex = windowTexture(Math.round(l / 3), Math.round(h / 4));
-  const side = new THREE.MeshStandardMaterial({
-    color: 0xffffff,
-    map: tex,
-    emissive: 0xffffff,
-    emissiveMap: tex,
-    emissiveIntensity: 0.85,
-    roughness: 0.9,
-  });
-  const mesh = new THREE.Mesh(new THREE.BoxGeometry(l, h, w), [side, side, M.roof, M.roof, side, side]);
-  mesh.position.set(x, h / 2, z);
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  return mesh;
+/** 사무동: 띠창 벽, 옥상 난간과 설비, 도로 쪽 현관. 길이 x, 높이 h, 폭 z. front = 도로 쪽 z 방향(-1 이면 -z 면) */
+function office(x: number, z: number, l: number, h: number, w: number, front: 1 | -1) {
+  const g = new THREE.Group();
+  g.position.set(x, 0, z);
+  const rows = Math.round(h / 3.8);
+  const wall = (cols: number) => {
+    const t = officeTextures(cols, rows);
+    return new THREE.MeshStandardMaterial({
+      map: t.map,
+      emissive: 0xffffff,
+      emissiveMap: t.emissive,
+      emissiveIntensity: 0.9,
+      roughness: 0.55,
+      metalness: 0.1,
+    });
+  };
+  const long = wall(Math.round(l / 3.2));
+  const short = wall(Math.round(w / 3.2));
+  const body = new THREE.Mesh(new THREE.BoxGeometry(l, h, w), [short, short, M.roofFlat, M.roofFlat, long, long]);
+  body.position.y = h / 2 + 1;
+  body.castShadow = body.receiveShadow = true;
+  g.add(body);
+  const mk = (bw: number, bh: number, bd: number, m: THREE.Material, bx: number, by: number, bz: number) => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), m);
+    mesh.position.set(bx, by, bz);
+    mesh.castShadow = mesh.receiveShadow = true;
+    g.add(mesh);
+    return mesh;
+  };
+  mk(l + 1.2, 1, w + 1.2, M.plinth, 0, 0.5, 0); // 기단
+  // 옥상 난간과 설비
+  for (const sz of [-1, 1]) mk(l, 1.2, 0.4, M.trim, 0, h + 1.6, sz * (w / 2 - 0.2));
+  for (const sx of [-1, 1]) mk(0.4, 1.2, w, M.trim, sx * (l / 2 - 0.2), h + 1.6, 0);
+  mk(8, 3, 6, M.trim, -l / 4, h + 2.5, 0);
+  mk(5, 2, 4, M.plinth, l / 5, h + 2, 2);
+  mk(1.2, 6, 1.2, M.steel, l / 3, h + 4, -3);
+  // 현관: 캐노피와 유리문
+  const fz = front * (w / 2);
+  mk(12, 0.5, 5, M.trim, 0, 5.2, fz + front * 2.5);
+  for (const sx of [-1, 1]) mk(0.4, 4.2, 0.4, M.steel, sx * 5.4, 3.1, fz + front * 4.6);
+  mk(8, 3.6, 0.3, M.glass, 0, 2.8, fz + front * 0.2);
+  return g;
 }
 
 /** 번호·이름 팻말(공식 색상 체계: 배경 TRUST BLUE, 번호 HERITAGE GREEN) */
@@ -95,41 +110,123 @@ export function buildYard(scene: THREE.Scene, stations: Station[]) {
   scene.add(g);
   const add = <T extends THREE.Object3D>(o: T) => (g.add(o), o);
 
-  // 중앙 도로(정문 → 도크 뒤 적치장)와 가운데 선
-  const road = add(new THREE.Mesh(new THREE.BoxGeometry(600, 0.1, ROAD_HALF * 2), M.road));
-  road.position.set(-410, 0.05, 0);
-  road.receiveShadow = true;
-  for (let x = -700; x < -120; x += 14) {
-    const d = add(new THREE.Mesh(new THREE.BoxGeometry(7, 0.12, 0.5), M.line));
-    d.position.set(x, 0.08, 0);
-  }
-  // 가로등(불빛만, 조명은 넣지 않음 — 점광원이 늘면 무거워짐)
-  for (let x = -690; x < -130; x += 60)
-    for (const z of [-ROAD_HALF - 2, ROAD_HALF + 2]) {
-      const pole = add(new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.35, 12, 8), M.steel));
-      pole.position.set(x, 6, z);
-      const head = add(new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.5, 1), M.lamp));
-      head.position.set(x, 12, z - Math.sign(z) * 1.2);
+  // 도로망(layout.ts): 길마다 아스팔트·차선·초록 보행로를 그림 한 장으로. 세로 길은 같은 그림을 돌려 쓴다
+  {
+    const base = roadTexture();
+    ROADS.forEach((r, i) => {
+      const len = r.to - r.from;
+      const tex = base.clone();
+      tex.repeat.set(len / 14, 1);
+      const road = add(new THREE.Mesh(new THREE.PlaneGeometry(len, r.half * 2), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.92 })));
+      road.rotation.x = -Math.PI / 2;
+      if (!r.h) road.rotation.z = Math.PI / 2;
+      const mid = (r.from + r.to) / 2;
+      // 겹치는 곳이 깜빡이지 않게 길마다 높이를 조금씩 다르게
+      road.position.set(r.h ? mid : r.at, 0.06 + i * 0.004, r.h ? r.at : mid);
+      road.receiveShadow = true;
+    });
+    // 교차로: 차선이 겹쳐 보이지 않게 민무늬 아스팔트로 덮는다
+    const plain = new THREE.MeshStandardMaterial({ color: 0x2b2e33, roughness: 0.92 });
+    for (const h of ROADS)
+      for (const v of ROADS) {
+        if (!h.h || v.h) continue;
+        if (v.at < h.from - 1 || v.at > h.to + 1 || h.at < v.from - 1 || h.at > v.to + 1) continue;
+        const patch = add(new THREE.Mesh(new THREE.PlaneGeometry(v.half * 2, h.half * 2), plain));
+        patch.rotation.x = -Math.PI / 2;
+        patch.position.set(v.at, 0.09, h.at);
+        patch.receiveShadow = true;
+      }
+    // 장소 앞 횡단보도(그 장소가 면한 길을 가로지름)
+    const cw = new THREE.MeshStandardMaterial({ map: crosswalkTexture(), transparent: true, depthWrite: false, roughness: 0.9 }); // 밤에 빛나지 않게 조명을 받는 재질
+    for (const s of stations) {
+      if (!FOOTPRINT[s.id]) continue;
+      const d = doorOf(s.at);
+      const m = add(new THREE.Mesh(new THREE.PlaneGeometry(5, d.road.half * 2 - 8), cw));
+      m.rotation.x = -Math.PI / 2;
+      m.position.set(s.at[0] + 34, 0.1, d.road.at);
     }
+  }
+  // 가로등: 길 양옆 60 m 마다(교차로는 건너뜀). 기둥·팔·등을 InstancedMesh 3개로(불빛만, 조명은 넣지 않음)
+  {
+    const spots: { x: number; z: number; h: boolean; s: number }[] = [];
+    for (const r of ROADS)
+      for (let a = r.from + 30; a < r.to - 10; a += 60)
+        for (const side of [-1, 1]) {
+          const off = side * (r.half + 2);
+          const x = r.h ? a : r.at + off;
+          const z = r.h ? r.at + off : a;
+          // 다른 길 위에 서는 등은 뺀다
+          if (ROADS.some((o) => o !== r && onRoad(x, z, 3) && Math.abs((o.h ? z : x) - o.at) <= o.half + 3 && (o.h ? x : z) >= o.from && (o.h ? x : z) <= o.to)) continue;
+          spots.push({ x, z, h: r.h, s: -side });
+        }
+    const pole = add(new THREE.InstancedMesh(new THREE.CylinderGeometry(0.14, 0.22, 11, 8), M.steel, spots.length));
+    const arm = add(new THREE.InstancedMesh(new THREE.BoxGeometry(0.14, 0.14, 2.6), M.steel, spots.length));
+    const head = add(new THREE.InstancedMesh(new THREE.BoxGeometry(0.5, 0.16, 1.1), M.lamp, spots.length));
+    const m4 = new THREE.Matrix4();
+    const rot = new THREE.Matrix4().makeRotationY(Math.PI / 2);
+    spots.forEach((p, i) => {
+      // 팔과 등은 길 쪽으로 뻗는다. 세로 길에서는 90° 돌린다
+      const ax = p.h ? 0 : p.s;
+      const az = p.h ? p.s : 0;
+      pole.setMatrixAt(i, m4.makeTranslation(p.x, 5.5, p.z));
+      arm.setMatrixAt(i, m4.makeTranslation(p.x + ax * 1.2, 10.9, p.z + az * 1.2).multiply(p.h ? new THREE.Matrix4() : rot));
+      head.setMatrixAt(i, m4.makeTranslation(p.x + ax * 2.2, 10.75, p.z + az * 2.2).multiply(p.h ? new THREE.Matrix4() : rot));
+    });
+    pole.castShadow = true;
+  }
 
   const at = (id: string) => stations.find((s) => s.id === id)!.at;
 
-  // 0 정문·역사관: 도로를 가로지르는 정문 + 역사관 건물
+  // 0 정문: 도로를 가로지르는 문, 이름판(로고 없음), 경비실과 차단기. 역사관 전시관은 history.ts
   {
-    const [x, , z] = at('gate');
-    add(building(x, z, 50, 18, 30));
+    const [x] = at('gate');
     const gx = x - 60;
     for (const s of [-1, 1]) {
-      const p = add(new THREE.Mesh(new THREE.BoxGeometry(3, 14, 3), M.roof));
-      p.position.set(gx, 7, s * (ROAD_HALF + 3));
+      const p = add(new THREE.Mesh(new THREE.BoxGeometry(4, 15, 4), M.trim));
+      p.position.set(gx, 7.5, s * (ROAD_HALF + 4));
+      p.castShadow = true;
+      const cap = add(new THREE.Mesh(new THREE.BoxGeometry(4.6, 0.6, 4.6), M.plinth));
+      cap.position.set(gx, 15.3, s * (ROAD_HALF + 4));
     }
-    const beam = add(new THREE.Mesh(new THREE.BoxGeometry(3, 2.5, ROAD_HALF * 2 + 9), M.roof));
+    const beam = add(new THREE.Mesh(new THREE.BoxGeometry(2.4, 3.4, ROAD_HALF * 2 + 12), M.trim));
     beam.position.set(gx, 14, 0);
+    beam.castShadow = true;
+    // 이름판(들어오는 쪽 = −x 면)
+    const c = document.createElement('canvas');
+    c.width = 1024;
+    c.height = 96;
+    const cg = c.getContext('2d')!;
+    cg.fillStyle = '#002554';
+    cg.fillRect(0, 0, 1024, 96);
+    cg.fillStyle = '#ffffff';
+    cg.font = '700 56px Pretendard, system-ui, sans-serif';
+    cg.textAlign = 'center';
+    cg.textBaseline = 'middle';
+    cg.fillText('울산조선소 이야기', 512, 50);
+    const st = new THREE.CanvasTexture(c);
+    st.colorSpace = THREE.SRGBColorSpace;
+    const sign = add(new THREE.Mesh(new THREE.PlaneGeometry(32, 3), new THREE.MeshBasicMaterial({ map: st })));
+    sign.rotation.y = -Math.PI / 2;
+    sign.position.set(gx - 1.25, 14, 0);
+    // 경비실과 차단기
+    const hut = add(new THREE.Mesh(new THREE.BoxGeometry(5, 3.4, 4), M.trim));
+    hut.position.set(gx + 8, 1.7, ROAD_HALF + 5);
+    hut.castShadow = true;
+    const hutRoof = add(new THREE.Mesh(new THREE.BoxGeometry(6, 0.3, 5), M.plinth));
+    hutRoof.position.set(gx + 8, 3.55, ROAD_HALF + 5);
+    const win = add(new THREE.Mesh(new THREE.BoxGeometry(3.4, 1.4, 0.2), M.glass));
+    win.position.set(gx + 8, 2.2, ROAD_HALF + 2.95);
+    for (const s of [-1, 1]) {
+      const post = add(new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.3, 0.5), M.steel));
+      post.position.set(gx + 4, 0.65, s * (ROAD_HALF - 1));
+      const bar = add(new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.16, ROAD_HALF - 4), M.barrier));
+      bar.position.set(gx + 4, 1.2, s * (ROAD_HALF / 2 + 1));
+    }
   }
   // 1 설계동: 사무동(높은 건물)
   {
     const [x, , z] = at('design');
-    add(building(x, z, 44, 34, 26));
+    add(office(x, z, 44, 34, 26, z > 0 ? -1 : 1));
   }
   // 2 가공, 3 조립, 4 PE장, 5 도장은 안이 보이는 공장으로 factory/
   // 4 선행탑재장: 마당·크레인·블록은 factory/pe.ts
@@ -171,7 +268,7 @@ export function buildYard(scene: THREE.Scene, stations: Station[]) {
 
   // 팻말 높이: 건물 지붕보다 조금 위(건물 높이에 맞춤)
   const LIFT: Record<string, number> = {
-    gate: 30, design: 46, cutting: 32, assembly: 36, pe: 24, paint: 30,
+    gate: 30, design: 50, cutting: 32, assembly: 36, pe: 24, paint: 30,
     dock: 40, launch: 28, quay: 20, trial: 14, delivery: 20,
   };
   const labels = stations.map((s, i) => {

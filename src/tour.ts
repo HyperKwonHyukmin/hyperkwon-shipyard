@@ -9,6 +9,7 @@
 import * as THREE from 'three';
 import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { Station } from './content/stations';
+import { ROADS, routeBetween } from './layout';
 
 const STORE_KEY = 'ulsan-story:visited';
 const FLY_SEC = 2;
@@ -47,7 +48,7 @@ export function createTour(opt: TourOptions) {
   const { camera, controls, stations } = opt;
   const visited = loadVisited();
   let current = -1;
-  let fly: { k: number; p0: THREE.Vector3; t0: THREE.Vector3; p1: THREE.Vector3; t1: THREE.Vector3 } | null = null;
+  let fly: { k: number; p0: THREE.Vector3; t0: THREE.Vector3; p1: THREE.Vector3; t1: THREE.Vector3; sec?: number } | null = null;
 
   const panel = $('panel');
   const toggle = $<HTMLButtonElement>('p-toggle');
@@ -106,32 +107,29 @@ export function createTour(opt: TourOptions) {
   }
 
   // ── 지도(위에서 본 배치도) ──
-  const VB = { x0: -740, x1: 780, z0: -280, z1: 280 };
+  const VB = { x0: -760, x1: 780, z0: -300, z1: 300 };
   function drawMap() {
     const svg = $('map-svg');
     svg.setAttribute('viewBox', `${VB.x0} ${VB.z0} ${VB.x1 - VB.x0} ${VB.z1 - VB.z0}`);
     const rect = (x0: number, z0: number, x1: number, z1: number, cls: string) =>
       `<rect x="${x0}" y="${z0}" width="${x1 - x0}" height="${z1 - z0}" class="${cls}"/>`;
-    let html =
-      rect(VB.x0, VB.z0, 118, VB.z1, 'm-land') +
-      rect(118, VB.z0, VB.x1, VB.z1, 'm-sea') +
-      rect(-710, -20, -110, 20, 'm-road') +
+    let html = rect(VB.x0, VB.z0, 118, VB.z1, 'm-land') + rect(118, VB.z0, VB.x1, VB.z1, 'm-sea');
+    // 도로망(layout.ts)
+    for (const r of ROADS)
+      html += r.h ? rect(r.from, r.at - r.half, r.to, r.at + r.half, 'm-road') : rect(r.at - r.half, r.from, r.at + r.half, r.to, 'm-road');
+    html +=
       rect(-110, -24, 110, 24, 'm-dock') +
       rect(110, -26, 118, 26, 'm-gate') +
       rect(130, 139, 430, 165, 'm-pier') +
       rect(130, -165, 430, -139, 'm-pier');
-    // 블록 흐름 화살표(장소 → 도로 → 장소). 겹치지 않게 흐름마다 도로 위 높이를 조금씩 비킨다
+    // 블록 흐름 화살표: 트랜스포터와 같은 길(layout.ts)을 따라 그린다
     html += '<defs><marker id="m-arrow" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="m-arrow"/></marker></defs>';
-    let lane = 0;
     for (const s of stations)
       for (const f of s.flow ?? []) {
         const t = stations.find((u) => u.id === f.to);
         if (f.dir !== 'out' || !t) continue;
-        const [x0, , z0] = s.at;
-        const [x1, , z1] = t.at;
-        const y = (lane++ % 2 ? 1 : -1) * 9;
-        const end = Math.abs(z1) < 1 ? `L${x1 - 120} ${y}` : `L${x1} ${y} L${x1} ${z1 - Math.sign(z1) * 30}`;
-        html += `<path class="m-flow" d="M${x0} ${z0 - Math.sign(z0) * 30} L${x0} ${y} ${end}" marker-end="url(#m-arrow)"/>`;
+        const path = routeBetween(s.at, f.to === 'dock' ? null : t.at);
+        html += `<path class="m-flow" d="${path.map(([x, z], i) => `${i ? 'L' : 'M'}${x} ${z}`).join(' ')}" marker-end="url(#m-arrow)"/>`;
       }
     stations.forEach((s, i) => {
       const [x, , z] = s.at;
@@ -207,12 +205,19 @@ export function createTour(opt: TourOptions) {
     else if (e.key === 'Escape') openMap(false);
   });
 
+  /** 장소를 바꾸지 않고 카메라만 다른 시점으로(예: 도크의 인양 학습장 가까이 보기) */
+  function flyTo(cam: [number, number, number], look: [number, number, number], sec = FLY_SEC) {
+    controls.autoRotate = false;
+    controls.enabled = false;
+    fly = { k: 0, p0: camera.position.clone(), t0: controls.target.clone(), p1: new THREE.Vector3(...cam), t1: new THREE.Vector3(...look), sec };
+  }
+
   function update(dt: number) {
     if (!fly) return;
-    fly.k = Math.min(1, fly.k + dt / FLY_SEC);
+    fly.k = Math.min(1, fly.k + dt / (fly.sec ?? FLY_SEC));
     const e = inOut(fly.k);
     // 먼 거리를 날 때는 중간에 살짝 높이 올라 전체가 보이게
-    const lift = Math.sin(Math.PI * e) * Math.min(120, fly.p0.distanceTo(fly.p1) * 0.25);
+    const lift = fly.sec ? 0 : Math.sin(Math.PI * e) * Math.min(120, fly.p0.distanceTo(fly.p1) * 0.25); // 짧은 이동(회전 중심 옮기기)은 솟지 않음
     camera.position.lerpVectors(fly.p0, fly.p1, e);
     camera.position.y += lift;
     controls.target.lerpVectors(fly.t0, fly.t1, e);
@@ -236,5 +241,5 @@ export function createTour(opt: TourOptions) {
   // ?map: 지도를 연 채로 시작(캡처 확인용)
   if (new URLSearchParams(location.search).has('map')) openMap(true);
 
-  return { go, update, get current() { return current; } };
+  return { go, flyTo, update, get current() { return current; } };
 }
