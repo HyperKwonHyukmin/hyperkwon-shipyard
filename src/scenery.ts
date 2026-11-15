@@ -6,7 +6,8 @@
  * 실제 배치가 아니라 분위기를 위한 것이다(공개 자료 원칙: 배치도는 쓰지 않는다).
  */
 import * as THREE from 'three';
-import { cloudTexture, blockTexture } from './textures';
+import { unitBlockGeometry, seams } from './blockgen';
+import { cloudTexture } from './textures';
 import { FOOTPRINT, onRoad } from './layout';
 import type { Station } from './content/stations';
 
@@ -138,7 +139,8 @@ export function createScenery(scene: THREE.Scene, renderer: THREE.WebGLRenderer,
         spots.push({ x: x + rand(-4, 4), z: z + rand(-4, 4), l: rand(12, 22), w: rand(9, 15), h: rand(4, 9) });
       }
     const unit = new THREE.BoxGeometry(1, 1, 1);
-    const blocks = new THREE.InstancedMesh(unit, new THREE.MeshStandardMaterial({ map: blockTexture(), roughness: 0.75, metalness: 0.2 }), spots.length);
+    // 2026-11-14 W1: 매끈한 상자 → 판·늑판·거더·러그가 있는 블록 형상(blockgen, 크기만 바꿔 씀)
+    const blocks = new THREE.InstancedMesh(unitBlockGeometry(), seams(new THREE.MeshStandardMaterial({ roughness: 0.75, metalness: 0.2, side: THREE.DoubleSide })), spots.length);
     const stands = new THREE.InstancedMesh(unit, new THREE.MeshStandardMaterial({ color: 0x4a3a2c, roughness: 0.9 }), spots.length * 2);
     const m4 = new THREE.Matrix4();
     const q = new THREE.Quaternion();

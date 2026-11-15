@@ -1,12 +1,12 @@
 /**
- * 걷기 모드(2026-11-13 사용자: "주인공이 조선소 야드를 둘러보는 컨셉"). 컨셉은 "신입 사원의 야드 견학 첫날".
- * - 안전모를 쓴 주인공을 카메라가 뒤에서 따라간다. 화면을 끌면 둘러보고, 휠로 멀고 가깝게.
- * - WASD·방향키로 걷고 Shift 로 달린다. B 로 자전거를 탄다(야드가 600 m 라 걸으면 멀다. 실제 야드에서도 자전거를 탄다).
+ * 걷기 모드(2026-11-13 사용자: "주인공이 조선소 야드를 둘러보는 컨셉").
+ * - 안전모를 쓴 작업자를 카메라가 뒤에서 따라간다. 화면을 끌면 둘러보고, 휠로 멀고 가깝게.
+ * - WASD·방향키로 걷고 Shift 로 달린다. B 로 자전거를 탄다 — 야드가 600 m 라 걸으면 멀다(실제 야드에서도 자전거를 탄다).
+ *   2026-11-14 사용자 요청으로 작업차를 자전거로 되돌렸다. 안전 수칙 대화, 퀴즈, 견학 수첩은 뺀 그대로.
  * - 바닥을 누르면 그곳으로 간다(휴대폰에서는 이것으로 이동).
  * - 장소 앞에는 선배가 서 있다. 가까이 가면 그 장소의 설명 패널이 열리고 장면이 움직인다.
  *   E 를 누르면 그 장소를 위에서 본다(걷기를 잠시 멈춤). 바다 장소(진수·안벽·시운전·인도)는 도크 끝 전망대에서 E.
  * - 건물 벽, 적치 블록, 도크 구덩이, 바다는 지나갈 수 없다. 공장 안 설비는 아직 그냥 지나간다.
- * 선배 대화, 견학 수첩, 퀴즈는 다음 단계.
  */
 import * as THREE from 'three';
 import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
@@ -16,15 +16,15 @@ import { createAvatar, type Avatar } from './avatar';
 
 type Box = [number, number, number, number]; // x0, x1, z0, z1
 
-const SPEED = { walk: 6, run: 12, bike: 24 };
+const SPEED = { walk: 5, run: 10, bike: 15 };
 const RADIUS = 0.9;
 const NEAR = 42; // 이 거리 안에 들어오면 그 장소를 고른다
 const TALK = 12; // 이 거리 안이면 'E' 안내
-const SCALE = 1.35; // 자전거 크기(사람 모델의 키 2.7 m 에 맞춤)
-const HEAD = 3.2; // 카메라가 바라보는 높이(머리 조금 위)
+const BIKE_RADIUS = 1.0; // 자전거를 탔을 때의 충돌 반지름
+const HEAD = 2.2; // 카메라가 바라보는 높이(머리 조금 위)
 
 /** 바다 장소를 보는 전망대(도크 바다 쪽 끝 안벽 위)와 도크 옆 자리 */
-const VIEWPOINT: Record<string, [number, number]> = {
+export const VIEWPOINT: Record<string, [number, number]> = {
   dock: [-122, 40],
   launch: [104, 42],
   trial: [104, 66],
@@ -49,7 +49,10 @@ function tube(parent: THREE.Object3D, a: [number, number, number], b: [number, n
   return mesh;
 }
 
-/** 자전거: 바퀴(타이어·림·살), 다이아몬드 프레임, 핸들, 안장, 앞 바구니 */
+/**
+ * 자전거(2026-11-14 사용자 요청으로 작업차에서 되돌림): 바퀴(타이어·림·살), 다이아몬드 프레임, 핸들, 안장, 앞 바구니. 앞 = +x.
+ * 크기는 어른 자전거(바퀴 지름 약 0.9 m, 안장 높이 약 1.07 m). 사람은 BIKE_SEAT 자리에 앉힌다.
+ */
 function buildBike() {
   const g = new THREE.Group();
   const frame = new THREE.MeshStandardMaterial({ color: 0x1f6fb5, roughness: 0.35, metalness: 0.5 });
@@ -88,9 +91,10 @@ function buildBike() {
   const basket = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.22, 0.4), metal);
   basket.position.set(0.86, 1.0, 0);
   g.add(basket);
-  g.scale.setScalar(SCALE);
   return { g, wheels };
 }
+/** 사람을 앉힐 자리: 엉덩이(다리 회전축, 사람 기준 0.56 m)가 안장 위에 오게 */
+const BIKE_SEAT = new THREE.Vector3(-0.34, 0.56, 0);
 
 interface Options {
   scene: THREE.Scene;
@@ -102,6 +106,8 @@ interface Options {
   obstacles: Box[];
   /** 가까운 장소가 바뀌었을 때(설명 패널을 그 장소로) */
   onNear: (index: number) => void;
+  /** 장소 앞(E 안내 거리)에 들어오고 나갈 때. 걷는 동안 설명 패널을 접어 두고 도착하면 펼친다 */
+  onArrive?: (here: boolean) => void;
   /** E: 그 장소를 위에서 보기(걷기를 멈춤) */
   onLook: (index: number) => void;
   /** 움직이는 장애물(트랜스포터): 주인공이 밀려난다 */
@@ -134,7 +140,7 @@ export function createWalk(o: Options) {
     ring.rotateX(-Math.PI / 2);
     const ringMat = new THREE.MeshBasicMaterial({ color: 0x00ad1d, transparent: true, opacity: 0.85, depthWrite: false });
     spots.forEach((p, i) => {
-      const senior = createAvatar({ helmet: 'white', skin: i % 3 === 1 ? 3 : 2 });
+      const senior = createAvatar({ helmet: 'white' });
       senior.group.position.set(p.x + 1.4, 0, p.z);
       // 장소 쪽에서 길 쪽을 본다(전망대의 선배는 바다 쪽을 본다)
       const s = stations[i];
@@ -231,7 +237,7 @@ export function createWalk(o: Options) {
 
   // ── 안내(HUD) ──
   o.hud.innerHTML =
-    '<p class="walk-keys">WASD·방향키 걷기 · Shift 달리기 · <button type="button" class="btn" id="walk-bike">B 자전거</button> · 바닥을 누르면 그곳으로 · 끌어서 둘러보기</p>' +
+    '<p class="walk-keys">WASD·방향키 걷기 · Shift 달리기 · <button type="button" class="btn" id="walk-bike">B 자전거 타기</button> · 바닥을 누르면 그곳으로 · 끌어서 둘러보기</p>' +
     '<button type="button" class="btn primary" id="walk-look" hidden></button>';
   const lookBtn = o.hud.querySelector<HTMLButtonElement>('#walk-look')!;
   const bikeBtn = o.hud.querySelector<HTMLButtonElement>('#walk-bike')!;
@@ -240,13 +246,20 @@ export function createWalk(o: Options) {
   o.hud.hidden = true;
 
   function setRiding(on: boolean) {
+    // 타려는 자리가 좁으면(차가 벽에 걸리면) 타지 않는다
+    if (on && blocked(player.position.x, player.position.z, BIKE_RADIUS)) return;
     riding = on;
     bike.g.visible = on;
-    bikeBtn.textContent = on ? 'B 자전거에서 내리기' : 'B 자전거';
+    // 자전거에서는 사람을 안장 위로 올리고 페달 밟는 자세로
+    if (on) me.group.position.copy(BIKE_SEAT);
+    else me.group.position.set(0, 0, 0);
+    me.set(on ? 'coast' : 'idle');
+    bikeBtn.textContent = on ? 'B 자전거에서 내리기' : 'B 자전거 타기';
     bikeBtn.setAttribute('aria-pressed', String(on));
-    // 탈 때는 다리를 앞으로 모으고 몸을 조금 올린다
-    // 안장 위에 앉힌다(동작은 update 에서 '운전'으로 바뀜)
-    me.group.position.set(on ? -0.42 * SCALE : 0, on ? 0.62 * SCALE : 0, 0);
+    // 차를 타면 카메라를 조금 뒤로
+    const off = new THREE.Vector3().subVectors(camera.position, controls.target);
+    off.setLength(on ? Math.max(off.length(), 13) : Math.min(off.length(), 11));
+    camera.position.copy(controls.target).add(off);
   }
   function look() {
     if (!active || near < 0) return;
@@ -279,25 +292,31 @@ export function createWalk(o: Options) {
     controls.autoRotate = false;
     controls.enablePan = false;
     controls.zoomToCursor = false;
-    controls.minDistance = 5;
+    controls.minDistance = 3;
     controls.maxDistance = 70;
     controls.maxPolarAngle = Math.PI * 0.49;
-    // 카메라를 주인공 뒤(지금 보던 방향 그대로) 13 m, 눈높이보다 조금 위로. 낮게 잡아야 앞의 공장과 하늘이 보인다
+    // 카메라를 주인공 뒤(지금 보던 방향 그대로) 11 m, 눈높이보다 조금 위로. 낮게 잡아야 앞의 공장과 하늘이 보인다.
+    // 2026-11-14: 8.5 m 는 주인공이 화면 가운데를 너무 크게 막아서 늘림
     const back = new THREE.Vector3().subVectors(camera.position, controls.target).setY(0);
     if (back.lengthSq() < 1) back.set(-1, 0, 0);
-    back.normalize().multiplyScalar(13);
+    back.normalize().multiplyScalar(11);
     controls.target.copy(player.position).add(head.set(0, HEAD, 0));
-    camera.position.copy(controls.target).add(back).setY(HEAD + 3.4);
+    camera.position.copy(controls.target).add(back).setY(HEAD + 3.2);
     near = -1;
+    lookBtn.hidden = true;
+    o.onArrive?.(false);
     // ?goto=x,z: 그 자리로 걸어가게 한다(확인용 — 물건에 부딪히는 장면을 캡처할 때)
     const g = (new URLSearchParams(location.search).get('goto') ?? '').split(',').map(Number);
     if (g.length === 2 && g.every(Number.isFinite)) dest = new THREE.Vector3(g[0], 0, g[1]);
+    // ?bike: 자전거를 탄 채로 시작(확인용)
+    if (new URLSearchParams(location.search).has('bike')) setRiding(true);
   }
   function exit() {
     if (!active) return;
     active = false;
     player.visible = false;
     o.hud.hidden = true;
+    o.onArrive?.(true);
     keys.clear();
     dest = null;
     controls.enablePan = saved.pan;
@@ -350,11 +369,12 @@ export function createWalk(o: Options) {
     const moving = move.lengthSq() > 0;
     if (moving) {
       const speed = riding ? SPEED.bike : keys.has('Shift') || keys.has(' ') ? SPEED.run : SPEED.walk;
+      const rad = riding ? BIKE_RADIUS : RADIUS;
       move.normalize().multiplyScalar(speed * dt);
       before.copy(player.position);
       // 축을 나눠 움직여 벽을 따라 미끄러지게
-      if (!blocked(player.position.x + move.x, player.position.z)) player.position.x += move.x;
-      if (!blocked(player.position.x, player.position.z + move.z)) player.position.z += move.z;
+      if (!blocked(player.position.x + move.x, player.position.z, rad)) player.position.x += move.x;
+      if (!blocked(player.position.x, player.position.z + move.z, rad)) player.position.z += move.z;
       const went = player.position.distanceTo(before);
       if (went < 0.001) dest = null; // 막혔으면 누른 곳으로 가기를 그만둠
       follow(before.subVectors(player.position, before));
@@ -363,15 +383,17 @@ export function createWalk(o: Options) {
       const want = Math.atan2(-move.z, move.x);
       let d = want - player.rotation.y;
       d = Math.atan2(Math.sin(d), Math.cos(d));
-      player.rotation.y += d * Math.min(1, dt * 10);
-      phase += went * (riding ? 1.2 : 1.6);
+      player.rotation.y += d * Math.min(1, dt * (riding ? 6 : 10)); // 자전거는 조금 천천히 돈다
+      phase += went / 0.4;
     } else {
       follow(move.set(0, 0, 0));
       vel.set(0, 0, 0);
     }
-    // 동작: 자전거(운전 자세, 바퀴 굴리기) / 달리기 / 걷기 / 서 있기. 선배는 가까이 가면 끄덕인다
-    if (riding) for (const w of bike.wheels) w.rotation.z = -phase;
-    me.set(riding ? 'ride' : !moving ? 'idle' : keys.has('Shift') || keys.has(' ') ? 'run' : 'walk');
+    // 동작: 자전거(바퀴 굴리기, 페달) / 달리기 / 걷기 / 서 있기. 장소 앞 작업자는 가까이 가면 손을 든다
+    if (riding) {
+      for (const w of bike.wheels) w.rotation.z = -phase;
+      me.set(moving ? 'ride' : 'coast');
+    } else me.set(!moving ? 'idle' : keys.has('Shift') || keys.has(' ') ? 'run' : 'walk');
     me.update(dt);
     seniors.forEach((sn, i) => {
       const d = Math.hypot(player.position.x - spots[i].x, player.position.z - spots[i].z);
@@ -396,6 +418,7 @@ export function createWalk(o: Options) {
     const can = near >= 0 && Math.hypot(player.position.x - spots[near].x, player.position.z - spots[near].z) <= TALK;
     if (lookBtn.hidden === can) {
       lookBtn.hidden = !can;
+      o.onArrive?.(can);
     }
     if (can) {
       const label = `E · ${stations[near].name} 위에서 보기`;
@@ -412,7 +435,10 @@ export function createWalk(o: Options) {
       return active;
     },
     /** 물건을 미는 쪽으로서의 주인공(자리와 속도). 걷는 중이 아니면 null */
-    pusher: () => (active ? { x: player.position.x, z: player.position.z, hx: RADIUS, hz: RADIUS, vx: vel.x, vz: vel.z } : null),
+    pusher: () => {
+      const r = riding ? BIKE_RADIUS : RADIUS;
+      return active ? { x: player.position.x, z: player.position.z, hx: r, hz: r, vx: vel.x, vz: vel.z } : null;
+    },
     /** 그 자리가 막혔는가(물건들도 같은 판정을 쓴다) */
     blocked,
     /** 주인공이 선 자리(위에서 보기에서 돌아올 때) */

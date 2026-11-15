@@ -7,6 +7,7 @@
  * 좌표는 마당 중심 바닥이 원점. +z 가 도로 쪽(트랜스포터가 드나드는 쪽), 도로에서 보면 +x 가 오른쪽.
  */
 import * as THREE from 'three';
+import { doubleBottom, sideShell, BM, seams } from '../blockgen';
 import { overheadCrane, craneSteps, part, boxG, FM, std, sequence, lerp, inOut, sparks, type Step } from './shed';
 
 const YARD_L = 90;
@@ -31,8 +32,8 @@ const M = {
   ground: std(0x3a4049, 0.9),
   primer: std(0x6f6a62, 0.8, 0.3),
   primer2: std(0x7d776c, 0.8, 0.3),
-  painted: std(0x4f6a88, 0.55, 0.3),
-  antifoul: std(0x8c3027, 0.7, 0.15),
+  painted: seams(std(0x4f6a88, 0.55, 0.3)),
+  antifoul: seams(std(0x8c3027, 0.7, 0.15)),
   truck: std(0xe0a91c, 0.6, 0.2),
 };
 const EDGE = new THREE.LineBasicMaterial({ color: 0x0b0f16, transparent: true, opacity: 0.5 });
@@ -43,22 +44,19 @@ function edged(parent: THREE.Object3D, w: number, h: number, d: number, m: THREE
   mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry), EDGE));
   return mesh;
 }
-function bottomBlock(m: THREE.Material | THREE.Material[]) {
-  const g = new THREE.Group();
-  edged(g, BL, BOT.h, BOT.w, m, 0, BOT.h / 2, 0);
-  return g;
+// 2026-11-14 W1: 매끈한 상자 → blockgen 의 판·늑판·거더·늑골 구조(끝이 열려 안이 보임)
+/** 바닥 블록(이중저형). painted 면 선저는 빨강, 안은 도장색 */
+function bottomBlock(painted = false) {
+  return doubleBottom({ l: BL, w: BOT.w, h: BOT.h, shell: painted ? M.antifoul : BM.primer, inner: painted ? M.painted : BM.primer, frame: painted ? M.painted : BM.primerDark }).build();
 }
-function sideBlock(m: THREE.Material) {
-  const g = new THREE.Group();
-  edged(g, BL, SIDE.h, SIDE.w, m, 0, SIDE.h / 2, 0);
-  return g;
+/** 옆 블록(측벽형). side = 외판 쪽(L자에서 바깥) */
+function sideBlock(side: 1 | -1, painted = false) {
+  return sideShell({ l: BL, h: SIDE.h, w: SIDE.w, side, shell: painted ? M.painted : BM.primer, frame: painted ? M.painted : BM.primerDark }).build();
 }
 /** 도장을 마친 L자 블록. mirror 면 옆 블록이 +z 쪽 */
 function paintedL(mirror: boolean) {
-  // 선저 도료(빨강)는 바깥 면에만, 윗면(내저판)은 일반 도장색. 상자 면 순서: +x, -x, +y, -y, +z, -z
-  const a = M.antifoul;
-  const g = bottomBlock([a, a, M.painted, a, a, a]);
-  const s = sideBlock(M.painted);
+  const g = bottomBlock(true);
+  const s = sideBlock(mirror ? 1 : -1, true);
   s.position.set(0, BOT.h, (mirror ? 1 : -1) * (BOT.w / 2 - SIDE.w / 2));
   g.add(s);
   return g;
@@ -207,7 +205,7 @@ export function createPE(scene: THREE.Scene, at: [number, number, number]) {
         root.add(blockA, blockB);
       },
     },
-    truckIn(A.x, () => markCargo(bottomBlock(M.primer)) as THREE.Group, L1),
+    truckIn(A.x, () => markCargo(bottomBlock()) as THREE.Group, L1),
     ...lift(
       () => cargo!,
       { x: A.x, z: HAND, top: () => DECK + BOT.h },
@@ -220,7 +218,7 @@ export function createPE(scene: THREE.Scene, at: [number, number, number]) {
       enter: () => delete cargo!.userData.cargo,
     },
     truckOut(L1),
-    truckIn(A.x, () => markCargo(sideBlock(M.primer2)) as THREE.Group, L2),
+    truckIn(A.x, () => markCargo(sideBlock(-1)) as THREE.Group, L2),
     ...lift(
       () => cargo!,
       { x: A.x, z: HAND, top: () => DECK + SIDE.h },

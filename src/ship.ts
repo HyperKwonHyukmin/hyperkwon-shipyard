@@ -10,6 +10,7 @@
  */
 import * as THREE from 'three';
 import { mergeStatic } from './merge';
+import { strip, webPlate, floorWithHole, Parts, seams } from './blockgen';
 
 export const SHIP = {
   beam: 32,
@@ -34,7 +35,7 @@ export interface Block {
 }
 
 function std(color: number, roughness: number, metalness = 0.15) {
-  return new THREE.MeshStandardMaterial({ color, roughness, metalness, side: THREE.DoubleSide });
+  return seams(new THREE.MeshStandardMaterial({ color, roughness, metalness, side: THREE.DoubleSide }));
 }
 const M = {
   antifouling: std(0x8c3027, 0.7),
@@ -42,6 +43,9 @@ const M = {
   deck: std(0x4d6a46, 0.85),
   hatch: std(0x3b5b77, 0.6, 0.2),
   primer: std(0x7b8087, 0.8, 0.2),
+  /** 화물창·탱크 안쪽 도장(밝은 회색). 2026-11-14 W1: 블록을 판으로 만들면서 안쪽이 보이게 됨 */
+  hold: std(0xa9a7a0, 0.7, 0.2),
+  frame: std(0x8e8b84, 0.75, 0.25),
   house: std(0xe6e6df, 0.6),
   funnel: std(0x2a2e35, 0.6, 0.2),
   band: std(0xdedcd2, 0.6),
@@ -233,6 +237,16 @@ export function buildBulkCarrier(whole = false) {
       ] as [number, number][]
     ).map(([z, y]) => [s * z, y]);
 
+  // 판으로 만들 때의 단면 꺾은선: 바깥(선저·빌지·옆), 안(내저판·호퍼 경사판)
+  const outerBottom: [number, number][] = [[-HB, SHIP.split], ...arc.map(([z, y]) => [-z, y] as [number, number]).reverse(), ...arc, [HB, SHIP.split]];
+  const innerBottom: [number, number][] = [[HB, SHIP.split], [HB - 1, SHIP.split], [10, 2], [-10, 2], [-(HB - 1), SHIP.split], [-HB, SHIP.split]];
+  /** 호퍼 탱크 단면(빌지 쪽 삼각형에 가까운 볼록 다각형) */
+  const hopper = (s: number): [number, number][] =>
+    ([[10, 0.1], [HB - BILGE, 0.1], ...arc.slice(1), [HB - 0.1, SHIP.split - 0.1], [HB - 1, SHIP.split - 0.1], [10, 2]] as [number, number][]).map(([z, y]) => [s * z, y]);
+  /** 톱사이드 탱크 단면 */
+  const topside = (s: number): [number, number][] =>
+    ([[HB - 1.05, 13.05], [HB - 0.05, 13.05], [HB - 0.05, D - 0.05], [10.1, D - 0.05]] as [number, number][]).map(([z, y]) => [s * z, y]);
+
   for (let r = 0; r < SHIP.holds; r++) {
     const no = SHIP.holds - r; // 1번 화물창이 선수 쪽
     const x0 = SHIP.holdStart + r * SHIP.holdLen;
@@ -240,17 +254,42 @@ export function buildBulkCarrier(whole = false) {
     const L = x1 - x0;
     const xm = (x0 + x1) / 2;
 
+    // 2026-11-14 W1: 속이 찬 각기둥 → 끝이 열린 판 + 안 구조(늑판·거더·호퍼 웨브). 밖에서 본 모양은 같다
     const bottom = block(`H${no}-DB`, `${no}번 화물창 이중저`);
-    bottom.add(prism(bottomPts, x0, x1, M.antifouling));
+    bottom.add(withEdges(new THREE.Mesh(strip(outerBottom, x0, x1), M.antifouling)));
+    bottom.add(withEdges(new THREE.Mesh(strip(innerBottom, x0, x1), M.hold)));
+    {
+      const p = new Parts();
+      for (const z of [-10, -5, 0, 5, 10]) p.box(M.frame, L - 0.2, 1.8, 0.14, xm, 1.0, z); // 거더
+      for (let x = x0 + 1.5; x < x1 - 0.5; x += 3) {
+        for (const [za, zb] of [[-10, -5], [-5, 0], [0, 5], [5, 10]]) floorWithHole(p, M.frame, x, za + 0.07, zb - 0.07, 0.1, 1.95);
+        for (const sz of [1, -1]) p.add(M.frame, webPlate(hopper(sz), x));
+      }
+      p.build(bottom);
+    }
     boxIn(bottom, 0.8, 15.5, 27, M.primer, x0 + 0.4, 2 + 15.5 / 2, 0); // 횡격벽
 
     for (const s of [1, -1] as const) {
       const side = block(`H${no}-${s > 0 ? 'S' : 'P'}`, `${no}번 화물창 ${s > 0 ? '우현' : '좌현'} 측벽`);
-      side.add(prism(sidePts(s), x0, x1, M.hull));
+      side.add(withEdges(new THREE.Mesh(strip([[s * HB, SHIP.split], [s * HB, D]], x0, x1), M.hull)));
+      side.add(withEdges(new THREE.Mesh(strip([[s * HB, D], [s * 10, D]], x0, x1), M.deck)));
+      side.add(withEdges(new THREE.Mesh(strip([[s * 10, D], [s * (HB - 1), 13], [s * (HB - 1), SHIP.split], [s * HB, SHIP.split]], x0, x1), M.hold)));
       boxIn(side, L, 0.06, 6, M.deck, xm, D + 0.03, s * 13); // 측벽 위 갑판면
+      const p = new Parts();
+      // 화물창 늑골(안쪽 면에 0.9 m 마다) — 벌크선 화물창 안에서 가장 눈에 띄는 부재
+      for (let x = x0 + 0.45; x < x1 - 0.2; x += 0.9) p.box(M.frame, 0.12, 13 - SHIP.split - 0.4, 0.45, x, (13 + SHIP.split) / 2, s * (HB - 1.25));
+      // 톱사이드 탱크 웨브(4.8 m 마다)
+      for (let x = x0 + 2.4; x < x1 - 1; x += 4.8) p.add(M.frame, webPlate(topside(s), x));
+      p.build(side);
     }
 
     const deck = block(`H${no}-DK`, `${no}번 화물창 갑판·해치`);
+    {
+      // 갑판 아래 보(가로, 2.4 m 마다) — 아래에서 올려다보면 보임
+      const p = new Parts();
+      for (let x = x0 + 1.2; x < x1 - 0.5; x += 2.4) for (const sz of [1, -1]) p.box(M.frame, 0.16, 0.6, 3, x, D - 0.7, sz * 8.5);
+      p.build(deck);
+    }
     for (const s of [1, -1]) boxIn(deck, L, 0.4, 3, M.deck, xm, D - 0.2, s * 8.5);
     for (const x of [x0 + 1.5, x1 - 1.5]) boxIn(deck, 3, 0.4, 14, M.deck, x, D - 0.2, 0);
     for (const s of [1, -1]) boxIn(deck, L - 6, 2, 0.4, M.deck, xm, D + 1, s * 7.2);

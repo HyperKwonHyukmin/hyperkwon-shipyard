@@ -268,5 +268,5 @@ export function createTour(opt: TourOptions) {
     fly = null;
     controls.enabled = true;
   };
-  return { go, select, flyTo, stop, update, get current() { return current; } };
+  return { go, select, flyTo, stop, update, setCollapsed, get current() { return current; } };
 }

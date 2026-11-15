@@ -198,7 +198,48 @@ export function createErection(scene: THREE.Scene, rig: Rig, blocks: Block[], op
   }
 
   reset(Math.min(Math.max(0, opt.placed), blocks.length));
+
+  // ── 직접 운전(operate.ts, 2026-11-14): 자동 탑재를 멈추고 지금 블록을 사용자에게 넘긴다 ──
+  /** 지금 블록을 트랜스포터에 실어 적치장에 세워 두고 넘긴다. 다 쌓았으면 null */
+  function hand() {
+    if (index >= blocks.length) return null;
+    const f = info[index];
+    truck.visible = true;
+    truck.position.set(opt.stageX, opt.groundY, f.cz);
+    blocks[index].object.visible = true;
+    carry('truck');
+    return {
+      name: blocks[index].name,
+      /** 제자리의 경계 상자(월드) */
+      box: f.box,
+      /** 트랜스포터 위에서의 윗면 중심 */
+      pickup: new THREE.Vector3(opt.stageX, opt.groundY + DECK_TOP + f.h, f.cz),
+      height: f.h,
+    };
+  }
+  /** 블록 윗면 중심을 이 점에 둔다(훅에 매달린 동안) */
+  function carryAt(x: number, top: number, z: number) {
+    const f = info[index];
+    blocks[index].object.position.set(x - f.cx, top - f.top, z - f.cz);
+  }
+  /** 제자리에 앉힘: 용접을 시작하고 다음 블록으로(자동 탑재는 밖에서 update 를 다시 부르면 이어짐) */
+  function landed() {
+    blocks[index].object.position.set(0, 0, 0);
+    opt.onPlaced?.(info[index].box);
+    index++;
+    if (index >= blocks.length) truck.visible = false;
+    begin();
+  }
+  /** 이미 앉은 블록들의 경계 상자 */
+  const placedBoxes = () => info.slice(0, index).map((f) => f.box);
+
   return {
+    hand,
+    carryAt,
+    landed,
+    placedBoxes,
+    /** 직접 운전을 그만둘 때: 지금 블록을 처음부터 다시 자동으로 */
+    resume: () => reset(index),
     update,
     /** 지금까지 앉은 블록 수 */
     placed: () => index,

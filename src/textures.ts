@@ -54,6 +54,21 @@ export function concreteTexture() {
     }
   blotch(g, S, S, 10, 'rgba(40,44,50,0.05)', 90);
   blotch(g, S, S, 6, 'rgba(255,255,255,0.03)', 70);
+  // 현장 바닥의 때(화질 1차, 2026-11-14): 기름 얼룩, 녹물, 강재를 끌고 간 긁힌 줄
+  blotch(g, S, S, 5, 'rgba(18,20,24,0.10)', 26);
+  blotch(g, S, S, 4, 'rgba(120,72,40,0.07)', 40);
+  g.strokeStyle = 'rgba(30,32,36,0.10)';
+  for (let i = 0; i < 6; i++) {
+    const x = Math.random() * S;
+    const y = Math.random() * S;
+    const a = Math.random() * Math.PI;
+    const l = 60 + Math.random() * 160;
+    g.lineWidth = 1 + Math.random() * 2;
+    g.beginPath();
+    g.moveTo(x, y);
+    g.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l);
+    g.stroke();
+  }
   speckle(g, S, S, 5000, 0.07);
   // 줄눈
   g.strokeStyle = 'rgba(40,43,48,0.35)';

@@ -83,6 +83,8 @@ export function createTrial(scene: THREE.Scene, o: Options) {
 
   // ── 운동 상태 ──
   const s = { x: START_X, z: 0, psi: 0, v: 6, r: 0, rudder: 0, vTarget: 8, tau: 5, heel: 0 };
+  // 처음부터 시운전 해역에 둔다. 2026-11-14: update 에서만 자리를 잡아, 시운전 장소를 보기 전까지 원점(도크 한가운데)에 완성된 배가 떠 있었다
+  ship.position.set(s.x, keelY, s.z);
   let zigFrom = 0;
   let zigMode = false;
   let foamTimer = 0;

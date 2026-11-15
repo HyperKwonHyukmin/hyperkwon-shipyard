@@ -29,6 +29,8 @@ export interface Station {
   cam: [number, number, number];
   /** 블록 흐름(패널 '블록 흐름', 지도 화살표, 도로 트랜스포터 경로가 out 흐름에서 나온다) */
   flow?: Flow[];
+  /** 빠른 견학 한 바퀴(quicktour.ts)에서 보여 줄 한 줄 — 지금 화면에서 일어나는 일 */
+  quick?: string;
   /** 카메라가 바라볼 점(없으면 at). 오른쪽 설명 패널에 가리지 않게 건물을 화면 왼쪽으로 옮길 때 */
   look?: [number, number, number];
 }
@@ -94,6 +96,7 @@ export const STATIONS: Station[] = [
   },
   {
     id: 'cutting',
+    quick: '강판을 설계 모양대로 잘라 부재를 만들고, 프레스로 눌러 곡면을 만듭니다.',
     name: '강재 가공공장',
     processes: ['1 가공'],
     summary:
@@ -106,6 +109,7 @@ export const STATIONS: Station[] = [
   },
   {
     id: 'assembly',
+    quick: '잘라 낸 부재를 용접해 블록을 만들고(소·중·대조립), 배관을 미리 답니다(선행의장).',
     name: '조립공장',
     processes: ['2 소·중조립', '3 대조립', '4 선행의장'],
     summary:
@@ -125,6 +129,7 @@ export const STATIONS: Station[] = [
   },
   {
     id: 'pe',
+    quick: '블록 여러 개를 땅 위에서 미리 이어 붙여, 도크에 올릴 큰 블록으로 만듭니다(선행탑재).',
     name: '선행탑재장(PE장)',
     processes: ['5 블록 1차 선행탑재', '7 블록 2차 선행탑재'],
     summary:
@@ -142,6 +147,7 @@ export const STATIONS: Station[] = [
   },
   {
     id: 'paint',
+    quick: '블록을 칠합니다. 바닷물에 잠길 바깥은 빨간 방오 도료입니다. 칠한 뒤 다시 PE장에서 이어 붙입니다.',
     name: '도장공장',
     processes: ['6 도장작업'],
     summary:
@@ -162,6 +168,7 @@ export const STATIONS: Station[] = [
   },
   {
     id: 'dock',
+    quick: '골리앗 크레인이 블록을 하나씩 들어 도크에 올려 배를 쌓아 갑니다(탑재).',
     name: '도크',
     processes: ['8 블록 탑재'],
     summary:
@@ -180,6 +187,7 @@ export const STATIONS: Station[] = [
   },
   {
     id: 'launch',
+    quick: '다 쌓으면 도크에 물을 채워 배를 띄우고, 게이트를 열어 예인선이 끌어냅니다(진수).',
     name: '진수',
     processes: ['10 진수'],
     summary:
@@ -193,6 +201,7 @@ export const STATIONS: Station[] = [
   },
   {
     id: 'quay',
+    quick: '안벽에 배를 붙여 갑판 크레인·구명정 같은 장비를 마저 답니다(후행의장).',
     name: '의장 안벽',
     processes: ['9 후행의장'],
     summary:
@@ -205,6 +214,7 @@ export const STATIONS: Station[] = [
   },
   {
     id: 'trial',
+    quick: '바다에 나가 속력, 선회, 지그재그, 긴급 정지를 시험합니다(시운전).',
     name: '시운전 해역',
     processes: ['11 시운전'],
     summary:
@@ -217,6 +227,7 @@ export const STATIONS: Station[] = [
   },
   {
     id: 'delivery',
+    quick: '명명식에서 이름을 붙이고 선주에게 넘기면, 첫 항해를 떠납니다(인도).',
     name: '명명식·인도',
     processes: ['12 인도'],
     summary:

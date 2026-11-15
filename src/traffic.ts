@@ -7,6 +7,7 @@
 import * as THREE from 'three';
 import type { Station } from './content/stations';
 import { routeBetween } from './layout';
+import { doubleBottom, sideShell, BM, seams } from './blockgen';
 
 const SPEED = 9; // m/s
 const LANE = 6;
@@ -21,8 +22,8 @@ const M = {
   lamp: new THREE.MeshStandardMaterial({ color: 0xffa020, emissive: 0xffa020, emissiveIntensity: 3 }),
   primer: std(0x6f6a62, 0.8, 0.3),
   primer2: std(0x7d776c, 0.8, 0.3),
-  painted: std(0x4f6a88, 0.55, 0.3),
-  antifoul: std(0x8c3027, 0.7, 0.15),
+  painted: seams(std(0x4f6a88, 0.55, 0.3)),
+  antifoul: seams(std(0x8c3027, 0.7, 0.15)),
   pallet: std(0x3d4148, 0.8, 0.4),
 };
 
@@ -59,18 +60,18 @@ function cargo(from: string, to: string) {
     // 팔레트에 쌓은 부재
     box(g, 12, 0.4, 6, M.pallet, 0, 0.2, 0);
     for (let i = 0; i < 4; i++) box(g, 10 - i * 1.2, 0.35, 5 - i * 0.6, M.primer, (i % 2) * 0.6, 0.6 + i * 0.37, 0);
-  } else if (from === 'assembly') {
-    box(g, 12, 3, 8, M.primer, 0, 1.5, 0);
-  } else if (from === 'pe' && to === 'paint') {
-    box(g, 14, 3, 7.5, M.primer, 0, 1.5, 0);
-    box(g, 14, 7, 2, M.primer2, 0, 6.5, -2.75);
-  } else if (from === 'paint') {
-    box(g, 14, 3, 7.5, [a, a, M.painted, a, a, a], 0, 1.5, 0);
-    box(g, 14, 7, 2, M.painted, 0, 6.5, -2.75);
   } else {
-    // PE장 → 도크: U자 단면 큰 블록
-    box(g, 14, 3, 12, [a, a, M.painted, a, a, a], 0, 1.5, 0);
-    for (const z of [-5.2, 5.2]) box(g, 14, 7, 1.6, M.painted, 0, 6.5, z);
+    // 2026-11-14 W1: 상자 → blockgen 구조 블록(판·늑판·늑골)
+    const painted = from === 'paint' || (from === 'pe' && to !== 'paint');
+    const w = from === 'assembly' ? 8 : from === 'pe' && to !== 'paint' ? 12 : 7.5;
+    const l = from === 'assembly' ? 12 : 14;
+    g.add(doubleBottom({ l, w, h: 3, shell: painted ? a : BM.primer, inner: painted ? M.painted : BM.primer, frame: painted ? M.painted : BM.primerDark }).build());
+    const sides: [number, 1 | -1][] = from === 'assembly' ? [] : from === 'pe' && to !== 'paint' ? [[-5.2, -1], [5.2, 1]] : [[-2.75, -1]];
+    for (const [z, s] of sides) {
+      const sd = sideShell({ l, h: 7, w: from === 'pe' && to !== 'paint' ? 1.6 : 2, side: s, shell: painted ? M.painted : BM.primer, frame: painted ? M.painted : BM.primerDark }).build();
+      sd.position.set(0, 3, z);
+      g.add(sd);
+    }
   }
   g.position.y = DECK;
   return g;

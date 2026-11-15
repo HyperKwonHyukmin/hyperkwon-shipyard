@@ -9,6 +9,7 @@
  * 조명 부담을 줄이려고 점광원은 건물 1개뿐, 부스 조명은 발광 재질로만.
  */
 import * as THREE from 'three';
+import { doubleBottom, sideShell, lugs, Parts, seams } from '../blockgen';
 import { buildShed, part, boxG, FM, std, sequence, lerp, inOut, sparks, type Step } from './shed';
 
 const L = 66;
@@ -27,7 +28,7 @@ const BOOTH = { l: 22, h: 15, back: 9 };
 const ROAD = -42;
 
 const C = {
-  primer: new THREE.Color(0x6f6a62),
+  primer: new THREE.Color(0x7d6e60),
   bare: new THREE.Color(0xa3a8ad),
   outer: new THREE.Color(0x8c3027),
   inner: new THREE.Color(0x4f6a88),
@@ -48,13 +49,19 @@ function slicedBlock() {
   const sideZ = -(BOT.w / 2 - SIDE.w / 2);
   for (let i = 0; i < SLICES; i++) {
     const x = -BL / 2 + sl / 2 + i * sl;
-    const outer = std(0x6f6a62, 0.75, 0.3);
-    const inner = std(0x6f6a62, 0.75, 0.3);
-    // 상자 면 순서: +x, -x, +y, -y, +z, -z. 바닥 블록 윗면만 안쪽(내저판)
-    part(g, boxG(sl, BOT.h, BOT.w), [outer, outer, inner, outer, outer, outer], x, BOT.h / 2, 0);
-    part(g, boxG(sl, SIDE.h, SIDE.w), inner, x, BOT.h + SIDE.h / 2, sideZ);
+    const outer = seams(std(0x7d6e60, 0.75, 0.3));
+    const inner = seams(std(0x7d6e60, 0.75, 0.3));
+    // 2026-11-14 W1: 상자 → 판·늑판·늑골 구조. 선저판(outer)과 안쪽(inner) 재질을 조각마다 따로 둬 칠해지는 순서가 보인다
+    const db = doubleBottom({ l: sl, w: BOT.w, h: BOT.h, shell: outer, inner, frame: inner, lug: false, spacing: 1.2 }).build();
+    db.position.x = x;
+    const sd = sideShell({ l: sl, h: SIDE.h, w: SIDE.w, side: -1, shell: inner, frame: inner, lug: false }).build();
+    sd.position.set(x, BOT.h, sideZ);
+    g.add(db, sd);
     slices.push({ outer, inner, x });
   }
+  const lp = new Parts();
+  lugs(lp, BL, BOT.w, BOT.h);
+  lp.build(g);
   // 조각 경계선 없이 블록 둘레에만 선
   const e1 = new THREE.LineSegments(new THREE.EdgesGeometry(boxG(BL, BOT.h, BOT.w)), EDGE);
   e1.position.y = BOT.h / 2;
