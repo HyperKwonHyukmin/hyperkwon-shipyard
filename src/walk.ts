@@ -16,7 +16,9 @@ import { createAvatar, type Avatar } from './avatar';
 
 type Box = [number, number, number, number]; // x0, x1, z0, z1
 
-const SPEED = { walk: 5, run: 10, bike: 15 };
+// 2026-11-15 사용자(휴대폰 시험): "조선소가 너무 방대한데 자전거나 뛰는 속도가 너무 느리다" → 5·10·15 에서 올림.
+// 실제 사람 속도보다 빠르지만, 야드 끝에서 끝(약 1.5 km)을 자전거로 50 초쯤에 가게 했다. 먼 단계는 단계 바로 순간 이동
+const SPEED = { walk: 6, run: 16, bike: 30 };
 const RADIUS = 0.9;
 const NEAR = 42; // 이 거리 안에 들어오면 그 장소를 고른다
 const TALK = 12; // 이 거리 안이면 'E' 안내
@@ -110,6 +112,8 @@ interface Options {
   onArrive?: (here: boolean) => void;
   /** E: 그 장소를 위에서 보기(걷기를 멈춤) */
   onLook: (index: number) => void;
+  /** 휴대폰 걷기 중 '설명 보기'(가린 설명 패널을 잠깐 연다) */
+  onInfo?: (open: boolean) => void;
   /** 움직이는 장애물(트랜스포터): 주인공이 밀려난다 */
   dynamic?: () => { x: number; z: number; hx: number; hz: number }[];
   /** 안내 글과 E 버튼을 그릴 곳 */
@@ -235,15 +239,75 @@ export function createWalk(o: Options) {
     });
   }
 
-  // ── 안내(HUD) ──
+  // ── 안내(HUD)와 버튼 ──
+  // 2026-11-15 사용자: "휴대폰에서 걸어가기 할 때 이동이 안 된다. 키보드를 모두 버튼으로, 모바일은 조이스틱, 시선은 지금처럼 드래그".
+  // 키보드 기능은 모두 버튼으로(달리기 = 켜고 끄기, 자전거, 위에서 보기). 조이스틱은 화면과 따로인 요소라 시선 돌리기 끌기와 섞이지 않는다
   o.hud.innerHTML =
-    '<p class="walk-keys">WASD·방향키 걷기 · Shift 달리기 · <button type="button" class="btn" id="walk-bike">B 자전거 타기</button> · 바닥을 누르면 그곳으로 · 끌어서 둘러보기</p>' +
-    '<button type="button" class="btn primary" id="walk-look" hidden></button>';
+    '<p class="walk-keys"><span class="kb">WASD·방향키 걷기 · Shift 달리기 · B 자전거 · 바닥을 누르면 그곳으로 · </span><span class="touch">왼쪽 원을 끌어 걷기 · </span>화면을 끌어 둘러보기</p>' +
+    '<div class="walk-btns"><button type="button" class="btn" id="walk-run" aria-pressed="false">달리기</button>' +
+    '<button type="button" class="btn" id="walk-bike" aria-pressed="false">자전거 타기</button></div>' +
+    '<button type="button" class="btn primary" id="walk-look" hidden></button>' +
+    '<button type="button" class="btn only-phone" id="walk-info" hidden></button>';
+  const infoBtn = o.hud.querySelector<HTMLButtonElement>('#walk-info')!;
+  infoBtn.addEventListener('click', () => near >= 0 && o.onInfo?.(true));
+  // 조작 안내는 처음 몇 초만(화면을 가리지 않게)
+  const keysEl = o.hud.querySelector<HTMLElement>('.walk-keys')!;
+  let hintTimer = 0;
   const lookBtn = o.hud.querySelector<HTMLButtonElement>('#walk-look')!;
   const bikeBtn = o.hud.querySelector<HTMLButtonElement>('#walk-bike')!;
+  const runBtn = o.hud.querySelector<HTMLButtonElement>('#walk-run')!;
   lookBtn.addEventListener('click', look);
   bikeBtn.addEventListener('click', () => setRiding(!riding));
+  let runOn = false;
+  runBtn.addEventListener('click', () => {
+    runOn = !runOn;
+    runBtn.setAttribute('aria-pressed', String(runOn));
+  });
   o.hud.hidden = true;
+
+  // 가상 조이스틱(휴대폰·좁은 화면에서만 CSS 로 보임). joy = 화면 기준 (오른쪽, 앞), 길이 0~1
+  const joy = { x: 0, y: 0 };
+  const joyEl = document.createElement('div');
+  joyEl.className = 'walk-joy';
+  joyEl.hidden = true;
+  joyEl.setAttribute('aria-label', '이동 조이스틱');
+  joyEl.innerHTML = '<i></i>';
+  document.body.appendChild(joyEl);
+  const knob = joyEl.querySelector('i')!;
+  {
+    const R = 48; // 손잡이가 움직이는 반지름(px)
+    let id: number | null = null;
+    const set = (e: PointerEvent) => {
+      const r = joyEl.getBoundingClientRect();
+      let dx = e.clientX - (r.left + r.width / 2);
+      let dy = e.clientY - (r.top + r.height / 2);
+      const d = Math.hypot(dx, dy);
+      if (d > R) {
+        dx *= R / d;
+        dy *= R / d;
+      }
+      knob.style.transform = `translate(${dx}px, ${dy}px)`;
+      // 가운데 근처는 흘림(손가락 떨림), 끝까지 밀면 1
+      const m = Math.max(0, Math.min(1, (Math.hypot(dx, dy) - 6) / (R - 6)));
+      const a = Math.atan2(dy, dx);
+      joy.x = Math.cos(a) * m;
+      joy.y = -Math.sin(a) * m;
+      if (m > 0) dest = null;
+    };
+    const end = () => {
+      id = null;
+      joy.x = joy.y = 0;
+      knob.style.transform = '';
+    };
+    joyEl.addEventListener('pointerdown', (e) => {
+      id = e.pointerId;
+      joyEl.setPointerCapture(e.pointerId);
+      set(e);
+      e.preventDefault();
+    });
+    joyEl.addEventListener('pointermove', (e) => e.pointerId === id && set(e));
+    for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture'] as const) joyEl.addEventListener(ev, (e) => e.pointerId === id && end());
+  }
 
   function setRiding(on: boolean) {
     // 타려는 자리가 좁으면(차가 벽에 걸리면) 타지 않는다
@@ -254,7 +318,8 @@ export function createWalk(o: Options) {
     if (on) me.group.position.copy(BIKE_SEAT);
     else me.group.position.set(0, 0, 0);
     me.set(on ? 'coast' : 'idle');
-    bikeBtn.textContent = on ? 'B 자전거에서 내리기' : 'B 자전거 타기';
+    bikeBtn.textContent = on ? '자전거에서 내리기' : '자전거 타기';
+    runBtn.hidden = on; // 자전거는 속도가 하나
     bikeBtn.setAttribute('aria-pressed', String(on));
     // 차를 타면 카메라를 조금 뒤로
     const off = new THREE.Vector3().subVectors(camera.position, controls.target);
@@ -286,6 +351,8 @@ export function createWalk(o: Options) {
     active = true;
     player.visible = true;
     o.hud.hidden = false;
+    joyEl.hidden = false;
+    document.body.classList.add('walking');
     if (at) player.position.set(at[0], 0, at[1]);
     else if (player.position.lengthSq() === 0) player.position.set(-690, 0, 6);
     controls.enabled = true;
@@ -304,7 +371,11 @@ export function createWalk(o: Options) {
     camera.position.copy(controls.target).add(back).setY(HEAD + 3.2);
     near = -1;
     lookBtn.hidden = true;
+    infoBtn.hidden = true;
     o.onArrive?.(false);
+    keysEl.classList.remove('gone');
+    clearTimeout(hintTimer);
+    hintTimer = window.setTimeout(() => keysEl.classList.add('gone'), 8000);
     // ?goto=x,z: 그 자리로 걸어가게 한다(확인용 — 물건에 부딪히는 장면을 캡처할 때)
     const g = (new URLSearchParams(location.search).get('goto') ?? '').split(',').map(Number);
     if (g.length === 2 && g.every(Number.isFinite)) dest = new THREE.Vector3(g[0], 0, g[1]);
@@ -316,6 +387,10 @@ export function createWalk(o: Options) {
     active = false;
     player.visible = false;
     o.hud.hidden = true;
+    joyEl.hidden = true;
+    joy.x = joy.y = 0;
+    knob.style.transform = '';
+    document.body.classList.remove('walking');
     o.onArrive?.(true);
     keys.clear();
     dest = null;
@@ -326,8 +401,18 @@ export function createWalk(o: Options) {
     controls.maxPolarAngle = saved.polar;
   }
   /** 지도·이전/다음으로 장소를 고르면 그 장소 앞으로 바로 옮긴다 */
+  const toast = document.createElement('div');
+  toast.className = 'tp-toast out';
+  toast.setAttribute('role', 'status');
+  document.body.appendChild(toast);
+  let toastTimer = 0;
   function teleport(index: number) {
     const p = spots[index];
+    // 순간 이동을 알린다(갑자기 풍경이 바뀌어 헷갈리지 않게)
+    toast.textContent = `${index}. ${stations[index].name} 앞으로 이동`;
+    toast.classList.remove('out');
+    clearTimeout(toastTimer);
+    toastTimer = window.setTimeout(() => toast.classList.add('out'), 1600);
     const before = player.position.clone();
     player.position.set(p.x - 3, 0, p.z);
     follow(player.position.clone().sub(before));
@@ -356,8 +441,10 @@ export function createWalk(o: Options) {
     }
     // 방향: 카메라가 보는 쪽이 앞
     fwd.subVectors(controls.target, camera.position).setY(0).normalize();
-    const f = (keys.has('w') || keys.has('ArrowUp') ? 1 : 0) - (keys.has('s') || keys.has('ArrowDown') ? 1 : 0);
-    const r = (keys.has('d') || keys.has('ArrowRight') ? 1 : 0) - (keys.has('a') || keys.has('ArrowLeft') ? 1 : 0);
+    const f = (keys.has('w') || keys.has('ArrowUp') ? 1 : 0) - (keys.has('s') || keys.has('ArrowDown') ? 1 : 0) + joy.y;
+    const r = (keys.has('d') || keys.has('ArrowRight') ? 1 : 0) - (keys.has('a') || keys.has('ArrowLeft') ? 1 : 0) + joy.x;
+    // 조이스틱을 덜 밀면 천천히(키보드는 늘 1)
+    const push = Math.min(1, Math.max(Math.hypot(joy.x, joy.y), keys.size ? 1 : 0));
     move.set(fwd.x * f - fwd.z * r, 0, fwd.z * f + fwd.x * r);
     if (move.lengthSq() === 0 && dest) {
       move.subVectors(dest, player.position).setY(0);
@@ -368,13 +455,18 @@ export function createWalk(o: Options) {
     }
     const moving = move.lengthSq() > 0;
     if (moving) {
-      const speed = riding ? SPEED.bike : keys.has('Shift') || keys.has(' ') ? SPEED.run : SPEED.walk;
+      const running = keys.has('Shift') || keys.has(' ') || runOn;
+      const speed = (riding ? SPEED.bike : running ? SPEED.run : SPEED.walk) * (dest && !push ? 1 : Math.max(0.35, push));
       const rad = riding ? BIKE_RADIUS : RADIUS;
       move.normalize().multiplyScalar(speed * dt);
       before.copy(player.position);
-      // 축을 나눠 움직여 벽을 따라 미끄러지게
-      if (!blocked(player.position.x + move.x, player.position.z, rad)) player.position.x += move.x;
-      if (!blocked(player.position.x, player.position.z + move.z, rad)) player.position.z += move.z;
+      // 축을 나눠 움직여 벽을 따라 미끄러지게. 빨라진 자전거가 느린 화면에서 얇은 벽(1.2 m)을 건너뛰지 않게 0.5 m 씩 나눠 검사
+      const n = Math.max(1, Math.ceil(move.length() / 0.5));
+      move.divideScalar(n);
+      for (let k = 0; k < n; k++) {
+        if (!blocked(player.position.x + move.x, player.position.z, rad)) player.position.x += move.x;
+        if (!blocked(player.position.x, player.position.z + move.z, rad)) player.position.z += move.z;
+      }
       const went = player.position.distanceTo(before);
       if (went < 0.001) dest = null; // 막혔으면 누른 곳으로 가기를 그만둠
       follow(before.subVectors(player.position, before));
@@ -393,7 +485,7 @@ export function createWalk(o: Options) {
     if (riding) {
       for (const w of bike.wheels) w.rotation.z = -phase;
       me.set(moving ? 'ride' : 'coast');
-    } else me.set(!moving ? 'idle' : keys.has('Shift') || keys.has(' ') ? 'run' : 'walk');
+    } else me.set(!moving ? 'idle' : keys.has('Shift') || keys.has(' ') || runOn ? 'run' : 'walk');
     me.update(dt);
     seniors.forEach((sn, i) => {
       const d = Math.hypot(player.position.x - spots[i].x, player.position.z - spots[i].z);
@@ -414,6 +506,13 @@ export function createWalk(o: Options) {
     if (best >= 0 && best !== near) {
       near = best;
       o.onNear(best);
+      o.onInfo?.(false);
+    }
+    // 단계 바로 순간 이동하면 near 가 먼저 바뀌므로, 글자는 near 기준으로 따로 맞춘다
+    if (infoBtn.hidden !== near < 0) infoBtn.hidden = near < 0;
+    if (near >= 0 && infoBtn.dataset.i !== String(near)) {
+      infoBtn.dataset.i = String(near);
+      infoBtn.textContent = `${stations[near].name} 설명 보기`;
     }
     const can = near >= 0 && Math.hypot(player.position.x - spots[near].x, player.position.z - spots[near].z) <= TALK;
     if (lookBtn.hidden === can) {

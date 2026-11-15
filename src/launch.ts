@@ -7,6 +7,16 @@
  */
 import * as THREE from 'three';
 import { sequence, lerp, inOut, type Step } from './factory/shed';
+import { buoyShare, towStep, KN, SAFE_KN, TIME_X } from './launch-calc';
+
+/** 직접 진수 단계: 크레인 비킴 → 물 채우기(사용자) → 게이트(자동) → 예인(사용자) → 떠남(자동) */
+export type ManualPhase = 'park' | 'fill' | 'gate' | 'tow' | 'leave';
+export interface ManualResult {
+  sec: number;
+  vmaxKn: number;
+  overSec: number;
+  fillM3: number;
+}
 
 interface Options {
   scene: THREE.Scene;
@@ -138,8 +148,126 @@ export function createLaunch(o: Options) {
     },
   ];
 
+  // ── 직접 진수(2026-11-15): 물 채우기와 예인을 사용자가 한다 ──
+  const TOW_END = 215; // 배 꼬리(x - 95)가 게이트(약 x 110)를 넉넉히 빠져나간 자리
+  let man: {
+    phase: ManualPhase;
+    k: number;
+    valve: boolean;
+    pull: number;
+    v: number;
+    t: number;
+    vmax: number;
+    over: number;
+    seq?: ReturnType<typeof sequence>;
+  } | null = null;
+  let result: ManualResult | null = null;
+  const sternInDock = () => o.ship.position.x - 95 < o.dock.x1 + 4;
+  const leaveSteps = (): Step[] => [
+    {
+      dur: 6,
+      label: '예인선이 배를 의장 안벽 쪽으로 데려감',
+      apply: (k) => {
+        o.ship.position.x = lerp(TOW_END, OUT_X, k * k);
+        placeTugs(40, true);
+      },
+    },
+    { dur: 0.5, label: '배가 떠남', enter: () => ((o.ship.visible = false), placeTugs(40, false)) },
+    { dur: 4, label: '게이트를 닫음', apply: (k) => o.gate.position.lerpVectors(gateAside(), gate0, inOut(k)) },
+    { dur: 5, label: '도크 물을 뺌 — 다음 배 준비', apply: (k) => setLevel(lerp(o.seaY, o.dock.floorY, k)) },
+    { dur: 0.1, label: '다음 배 탑재 시작', enter: () => (finish(), o.restart()) },
+  ];
+  function manualUpdate(dt: number) {
+    const m = man!;
+    if (m.phase !== 'leave') m.t += dt;
+    if (m.phase === 'park') {
+      m.k = Math.min(1, m.k + dt / 3);
+      o.parkCrane(m.k);
+      label = '크레인이 물러나는 중';
+      if (m.k >= 1) ((m.phase = 'fill'), (m.k = 0));
+    } else if (m.phase === 'fill') {
+      // 11 m 를 약 14 초에(실제로는 몇 시간)
+      if (m.valve) setLevel(Math.min(o.seaY, level + dt * 0.8));
+      label = m.valve ? '바닷물을 채우는 중' : '급수 밸브를 여세요';
+    } else if (m.phase === 'gate') {
+      m.k = Math.min(1, m.k + dt / 8);
+      const a = Math.min(1, m.k * 2);
+      const b = Math.max(0, m.k * 2 - 1);
+      if (b <= 0) o.gate.position.lerpVectors(gate0, gateOut(), inOut(a));
+      else o.gate.position.lerpVectors(gateOut(), gateAside(), inOut(b));
+      placeTugs(lerp(160, 40, inOut(a)), true);
+      label = '게이트를 띄워 비키는 중 — 예인선이 줄을 잡음';
+      if (m.k >= 1) ((m.phase = 'tow'), (m.k = 0));
+    } else if (m.phase === 'tow') {
+      m.v = towStep(m.v, m.pull, dt * TIME_X);
+      o.ship.position.x = Math.max(0, o.ship.position.x + m.v * dt * TIME_X);
+      placeTugs(40, true);
+      const kn = m.v * KN;
+      m.vmax = Math.max(m.vmax, kn);
+      if (kn > SAFE_KN && sternInDock()) m.over += dt;
+      label = sternInDock() ? '배를 도크 밖으로 끌어내는 중' : '도크를 빠져나왔습니다';
+      if (o.ship.position.x >= TOW_END) {
+        result = { sec: m.t, vmaxKn: m.vmax, overSec: m.over, fillM3: (o.dock.x1 - o.dock.x0) * o.dock.halfW * 2 * (o.seaY - o.dock.floorY) };
+        m.phase = 'leave';
+        m.seq = sequence(leaveSteps);
+      }
+    } else {
+      m.seq!.update(dt);
+      if (man) label = m.seq!.label();
+    }
+  }
+  const manual = {
+    start() {
+      finish();
+      man = { phase: 'park', k: 0, valve: false, pull: 0, v: 0, t: 0, vmax: 0, over: 0 };
+      result = null;
+      active = true;
+    },
+    get on() {
+      return man !== null;
+    },
+    get phase() {
+      return man?.phase ?? null;
+    },
+    setValve(on: boolean) {
+      if (man?.phase === 'fill') man.valve = on;
+    },
+    get valve() {
+      return man?.valve ?? false;
+    },
+    /** 게이트 열기. 열 수 없으면 까닭을 돌려준다 */
+    openGate(): string | null {
+      if (!man || man.phase !== 'fill') return null;
+      const gap = o.seaY - level;
+      if (gap > 0.05) return `안팎 수위가 같아야 게이트를 열 수 있습니다. 바다보다 ${gap.toFixed(1)} m 낮음 — 열면 바닷물이 쏟아져 들어옵니다.`;
+      man.valve = false;
+      man.phase = 'gate';
+      man.k = 0;
+      return null;
+    },
+    setPull(p: number) {
+      if (man) man.pull = p;
+    },
+    /** 화면 숫자 */
+    read() {
+      return {
+        depth: level - o.dock.floorY,
+        full: o.seaY - o.dock.floorY,
+        share: buoyShare(level, keelY, o.draft), // 용골이 반목 위에 있으므로 용골 높이부터
+        kn: (man?.v ?? 0) * KN,
+        stern: sternInDock(),
+        dist: o.ship.position.x,
+        towEnd: TOW_END,
+      };
+    },
+    get result() {
+      return result;
+    },
+  };
+
   /** 모든 것을 제자리로(배는 도크 바닥, 물 없음, 게이트 닫힘) */
   function finish() {
+    man = null;
     active = false;
     seq = null;
     wait = 0;
@@ -151,7 +279,11 @@ export function createLaunch(o: Options) {
     placeTugs(40, false);
   }
 
-  function update(dt: number) {
+  function update(dt: number, realDt = dt) {
+    if (man) {
+      manualUpdate(realDt);
+      return;
+    }
     if (!active) {
       if (!o.isComplete()) {
         wait = 0;
@@ -169,6 +301,7 @@ export function createLaunch(o: Options) {
 
   return {
     update,
+    manual,
     /** 막대를 움직이거나 '진수 바로 보기'를 누를 때: 진수를 멈추고 제자리로 */
     abort: finish,
     get active() {

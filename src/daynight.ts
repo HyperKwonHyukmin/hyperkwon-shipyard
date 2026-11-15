@@ -102,16 +102,18 @@ export function createDayNight(o: Options) {
     const day = t === 'day';
     const fog = o.scene.fog as THREE.FogExp2;
     o.scene.background = day ? dayBg : night.bg;
-    fog.color.setHex(day ? 0xc4d4e2 : night.fog);
-    fog.density = day ? 0.0009 : night.density;
-    o.renderer.toneMappingExposure = day ? 1.0 : night.exposure;
+    // 2026-11-15 W5 디오라마풍: 낮 안개를 조금 짙게(먼 곳이 흐려져 깊이감), 하늘빛(반구광)을 줄이고 해를 따뜻하게·낮게·세게
+    // → 그림자가 길고 진해져 형태가 또렷해진다. 하늘빛 2.0 은 그림자 쪽까지 밝혀 납작한 '장난감' 느낌의 주원인이었다
+    fog.color.setHex(day ? 0xc9d5e0 : night.fog);
+    fog.density = day ? 0.00115 : night.density;
+    o.renderer.toneMappingExposure = day ? 1.05 : night.exposure;
     o.sea.color.setHex(day ? 0x2d5f86 : night.sea);
-    o.hemi.color.setHex(day ? 0xdce9f7 : 0x5a6f9c);
-    o.hemi.groundColor.setHex(day ? 0x6f6656 : 0x1e1a16);
-    o.hemi.intensity = day ? 2.0 : 1.3;
-    o.moon.color.setHex(day ? 0xfff2de : 0x9fb4e0);
-    o.moon.intensity = day ? 2.6 : 0.9;
-    o.moon.position.set(day ? -250 : 300, 400, day ? 180 : -200);
+    o.hemi.color.setHex(day ? 0xc9dbf0 : 0x5a6f9c);
+    o.hemi.groundColor.setHex(day ? 0x5a5247 : 0x1e1a16);
+    o.hemi.intensity = day ? 1.15 : 1.3;
+    o.moon.color.setHex(day ? 0xffe4c0 : 0x9fb4e0);
+    o.moon.intensity = day ? 3.4 : 0.9;
+    o.moon.position.set(day ? -300 : 300, day ? 260 : 400, day ? 230 : -200); // 낮 해 고도 약 35°
     for (const e of emissive) e.m.emissiveIntensity = day ? e.base * 0.15 : e.base;
     // 낮에는 낮용 창 그림을 쓰고 발광은 끈다(밝은 벽이 빛나 보이지 않게)
     for (const w of windows) {

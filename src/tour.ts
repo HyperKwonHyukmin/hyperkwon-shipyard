@@ -72,6 +72,22 @@ export function createTour(opt: TourOptions) {
     $('p-name').textContent = s.name;
     $('p-proc').textContent = s.processes.length ? `공정 ${s.processes.join(' · ')}` : '공정 전 · 이야기의 시작';
     $('p-summary').textContent = s.summary;
+    const easy = $('p-easy');
+    easy.hidden = !s.easy;
+    easy.innerHTML = s.easy ? `<b>쉽게 말하면</b> ${esc(s.easy)}` : '';
+    const pts = $('p-points');
+    pts.hidden = !s.points?.length;
+    pts.innerHTML = s.points?.length
+      ? '<h3>현장 포인트</h3><ul>' +
+        s.points
+          .map((t) => {
+            // '머리: 내용' 이면 머리를 굵게
+            const k = t.indexOf(': ');
+            return k > 0 && k < 24 ? `<li><b>${esc(t.slice(0, k))}</b> ${esc(t.slice(k + 2))}</li>` : `<li>${esc(t)}</li>`;
+          })
+          .join('') +
+        '</ul>'
+      : '';
     const facts = $('p-facts');
     facts.innerHTML = s.facts
       .map(
@@ -106,7 +122,28 @@ export function createTour(opt: TourOptions) {
     $('visited').textContent = String(visited.size);
     $('visited-total').textContent = String(stations.length);
     drawMap();
+    drawSteps(i);
   }
+
+  // ── 단계 바: 공정 순서대로 칩. 지금 단계는 초록, 가 본 단계는 번호가 초록 ──
+  const stepsEl = $('steps');
+  function drawSteps(i: number) {
+    stepsEl.innerHTML = stations
+      .map(
+        (s, j) =>
+          `<button type="button" data-i="${j}" class="${j === i ? 'now' : visited.has(s.id) ? 'seen' : ''}"` +
+          ` title="${j}. ${esc(s.name)}" aria-label="${j}. ${esc(s.name)}"${j === i ? ' aria-current="step"' : ''}>` +
+          `<i>${j}</i>${esc(s.short ?? s.name)}</button>`,
+      )
+      .join('');
+    // 지금 단계를 바 가운데로(페이지는 스크롤하지 않게 바 안에서만)
+    const b = stepsEl.children[i] as HTMLElement | undefined;
+    if (b) stepsEl.scrollLeft = b.offsetLeft - (stepsEl.clientWidth - b.offsetWidth) / 2;
+  }
+  stepsEl.addEventListener('click', (e) => {
+    const b = (e.target as Element).closest('[data-i]');
+    if (b) go(Number(b.getAttribute('data-i')));
+  });
 
   // ── 지도(위에서 본 배치도) ──
   const VB = { x0: -760, x1: 780, z0: -300, z1: 300 };

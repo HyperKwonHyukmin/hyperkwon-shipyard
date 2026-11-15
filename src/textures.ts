@@ -44,7 +44,7 @@ function blotch(g: CanvasRenderingContext2D, w: number, h: number, n: number, co
 export function concreteTexture() {
   const S = 512;
   const { c, g } = canvas(S, S);
-  g.fillStyle = '#8a8e93';
+  g.fillStyle = '#8f8f8b'; // 2026-11-15 W5: 차가운 회색(#8a8e93) → 거의 중립(따뜻한 해 색이 곱해지므로 더 따뜻하면 흙색이 됨)
   g.fillRect(0, 0, S, S);
   // 슬래브마다 밝기를 조금씩 다르게
   for (let i = 0; i < 2; i++)
@@ -71,7 +71,7 @@ export function concreteTexture() {
   }
   speckle(g, S, S, 5000, 0.07);
   // 줄눈
-  g.strokeStyle = 'rgba(40,43,48,0.35)';
+  g.strokeStyle = 'rgba(40,43,48,0.2)'; // 줄눈을 옅게(10 m 격자가 화면을 바둑판처럼 만들었음)
   g.lineWidth = 2;
   for (const v of [0, 256]) {
     g.beginPath();

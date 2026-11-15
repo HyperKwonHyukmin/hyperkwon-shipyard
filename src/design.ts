@@ -14,7 +14,13 @@ const SCALE = 4; // 모형 축척 1/4
 const LM = SHIP.L / SCALE;
 const BM = SHIP.B / SCALE;
 const DM = SHIP.D / SCALE;
-const EXAG = 3; // 모형 위 휨 과장(실제 처짐 m × 이 값 = 모형 m)
+const EXAG = 2; // 모형 위 휨 과장(실제 처짐 m × 이 값 = 모형 m)
+/**
+ * 수면에 그리는 파 진폭(실제 m). 계산(beam.ts)의 파고 L/20(진폭 L/40) 그대로 그리면 모형 건현(약 1.75 m)보다 커서
+ * 새깅·가운데 적재 때 선미 갑판이 수면 아래 0.23 m 까지 잠겨 '물이 배를 뚫은' 것처럼 보였다(2026-11-15 사용자: "설계동 그래픽 깨짐").
+ * 휨 과장 3 → 2, 그림 진폭 L/70 이면 모든 경우 건현 0.31 m 이상(모의 계산). 응력·휨 계산은 그대로다.
+ */
+const WAVE_DRAW = SHIP.L / 70;
 const POOL = { l: 66, w: 16, h: 5.5 };
 const WATER_Y = POOL.h - 0.5;
 const LIMIT = 175; // MPa, 예시 기준(연강)
@@ -158,7 +164,7 @@ export function createDesign(scene: THREE.Scene, center: [number, number, number
     // 수면: 배 길이 = 파장
     for (let i = 0; i < wPos.count; i++) {
       const xm = wBase[i * 3];
-      const amp = (SHIP.L / 40) * waveNow;
+      const amp = WAVE_DRAW * waveNow;
       wPos.setY(i, wBase[i * 3 + 1] + (amp * Math.cos((2 * Math.PI * xm) / LM)) / SCALE);
     }
     wPos.needsUpdate = true;
@@ -211,8 +217,9 @@ export function createDesign(scene: THREE.Scene, center: [number, number, number
     const chart = panel.querySelector('#bm-curve');
     chart?.setAttribute('points', `0,${H / 2} ${pts} ${W},${H / 2}`);
     // 중앙 단면 응력 그림: 갑판 값과 선저 값 사이 직선 분포
-    const sx = (v: number) => 70 + (v / COLOR_RANGE) * 50;
-    panel.querySelector('#sec-dist')?.setAttribute('points', `70,10 ${sx(r.deck).toFixed(1)},10 ${sx(r.bottom).toFixed(1)},90 70,90`);
+    // 축 x = 100, 폭 ±45 에서 자른다(2026-11-15: 상한이 없어 −254 MPa 면 그림 밖·단면 위까지 삐져나갔음)
+    const sx = (v: number) => 100 + THREE.MathUtils.clamp(v / COLOR_RANGE, -1, 1) * 45;
+    panel.querySelector('#sec-dist')?.setAttribute('points', `100,10 ${sx(r.deck).toFixed(1)},10 ${sx(r.bottom).toFixed(1)},90 100,90`);
     const deckEl = panel.querySelector('#sec-deck');
     const botEl = panel.querySelector('#sec-bot');
     if (deckEl) deckEl.textContent = `갑판 ${fmt(r.deck)} MPa`;
@@ -238,16 +245,16 @@ export function createDesign(scene: THREE.Scene, center: [number, number, number
             <text x="0" y="62" class="small">선수</text><text x="280" y="62" text-anchor="end" class="small">선미</text>
           </svg>
         <div class="bm-figs">
-          <svg viewBox="0 0 140 112" class="bm-sec" role="img" aria-label="중앙 단면 응력 분포">
-            <rect x="10" y="10" width="40" height="80" class="hull"/>
-            <line x1="6" y1="50" x2="54" y2="50" class="na"/>
-            <line x1="70" y1="6" x2="70" y2="94" class="axis"/>
-            <polygon id="sec-dist" points="70,10 70,10 70,90 70,90"/>
-            <text x="30" y="106" text-anchor="middle" class="small">중앙 단면</text>
-            <text id="sec-deck" x="138" y="8" text-anchor="end" class="small"></text>
-            <text id="sec-bot" x="138" y="104" text-anchor="end" class="small"></text>
+          <svg viewBox="0 0 250 112" class="bm-sec" role="img" aria-label="중앙 단면 응력 분포">
+            <rect x="6" y="10" width="34" height="80" class="hull"/>
+            <line x1="2" y1="50" x2="44" y2="50" class="na"/>
+            <line x1="100" y1="6" x2="100" y2="94" class="axis"/>
+            <polygon id="sec-dist" points="100,10 100,10 100,90 100,90"/>
+            <text x="23" y="106" text-anchor="middle" class="small">중앙 단면</text>
+            <text id="sec-deck" x="152" y="15" class="small"></text>
+            <text id="sec-bot" x="152" y="94" class="small"></text>
           </svg>
-          <p class="bm-legend"><span class="t"></span>인장 <span class="c"></span>압축<br>배의 휨은 크게 과장했습니다.<br>상자형에 가까운 배, 정적 파도(파장 = 배 길이, 파고 = 길이/20)로 단순화한 교육용 예시이며 실제 설계 값이 아닙니다.</p>
+          <p class="bm-legend"><span class="t"></span>인장 <span class="c"></span>압축<br>배의 휨은 크게 과장했습니다.<br>상자형에 가까운 배, 정적 파도(파장 = 배 길이, 파고 = 길이/20)로 단순화한 교육용 예시이며 실제 설계 값이 아닙니다. 수조의 물결은 모형이 잠기지 않게 계산보다 낮게 그렸습니다.</p>
         </div>
         <p class="bm-warn" id="bm-warn" hidden>예시 기준(연강 175 MPa)을 넘습니다. 실제로는 이렇게 싣지 않도록 적재 계획을 세웁니다.</p>
       </div>`,

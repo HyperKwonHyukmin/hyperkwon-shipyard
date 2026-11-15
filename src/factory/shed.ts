@@ -77,7 +77,7 @@ export function buildShed(l: number, w: number, h: number, open: 1 | -1, lights:
   floorTex ??= concreteTexture();
   const ft = floorTex.clone();
   ft.repeat.set(l / 20, w / 20);
-  part(g, boxG(l + 2, 0.2, w + 2), new THREE.MeshStandardMaterial({ map: ft, color: 0x9aa0a8, roughness: 0.9 }), 0, 0.1, 0, false);
+  part(g, boxG(l + 2, 0.2, w + 2), new THREE.MeshStandardMaterial({ map: ft, color: 0xa6a6a2, roughness: 0.9 }), 0, 0.1, 0, false);
   if (!roofTex) {
     roofTex = roofTexture();
     roofTex.repeat.set(1, 6);
