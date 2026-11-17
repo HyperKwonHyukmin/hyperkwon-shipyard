@@ -9,6 +9,7 @@
  * 알아 둘 것: 한 사람이 메시 약 25개다(그리기 호출도 그만큼). 접속자가 많아지면 재질별로 합쳐야 한다.
  */
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 /** ride = 자전거 페달 밟기, coast = 자전거에 앉아 멈춤 */
 export type AvatarState = 'idle' | 'walk' | 'run' | 'greet' | 'ride' | 'coast';
@@ -99,7 +100,53 @@ function buildPerson(helmet: number, suit: number) {
   const ridge = add(head, new THREE.CapsuleGeometry(0.035, 0.42, 3, 6), M.helmet, 0, 0.44, 0);
   ridge.rotation.z = Math.PI / 2;
   g.scale.setScalar(SCALE);
-  return { g, body, head, legs, arms };
+  return { g, body, head, legs, arms, M };
+}
+
+/** 그룹 안의 메시들을 기준(ref) 좌표로 옮겨 하나로 합친다. 재질 색은 꼭짓점 색으로(tint 가 주면 그 색) */
+export function bakeMeshes(meshes: THREE.Mesh[], ref: THREE.Object3D, tint?: number) {
+  ref.updateWorldMatrix(true, true);
+  const inv = new THREE.Matrix4().copy(ref.matrixWorld).invert();
+  const c = new THREE.Color();
+  const parts = meshes.map((m) => {
+    m.updateWorldMatrix(true, false);
+    const g = m.geometry.clone().applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, m.matrixWorld));
+    c.set(tint ?? (m.material as THREE.MeshStandardMaterial).color);
+    const n = g.attributes.position.count;
+    const col = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) col.set([c.r, c.g, c.b], i * 3);
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    return g;
+  });
+  return mergeGeometries(parts);
+}
+
+/**
+ * 다른 접속자용 부품(2026-11-17 사용자: 캡슐 하나로 그린 상대 모습이 "이따위로 나온다").
+ * 주인공과 같은 모양을 부품 다섯 가지(몸+머리, 안전모, 다리, 왼팔, 오른팔)로 합쳐 돌려준다.
+ * peers.ts 가 부품별 InstancedMesh 로 그려, 사람 수와 상관없이 그리기 호출은 부품 수만큼이다.
+ * 좌표는 사람 기준(SCALE 적용 전). 다리·팔은 관절이 원점이다.
+ */
+export function avatarParts() {
+  const p = buildPerson(0xffffff, 0x3d5a80);
+  p.g.updateMatrixWorld(true);
+  const under = (o: THREE.Object3D, roots: THREE.Object3D[]) => {
+    for (let a: THREE.Object3D | null = o; a; a = a.parent) if (roots.includes(a)) return true;
+    return false;
+  };
+  const all: THREE.Mesh[] = [];
+  p.g.traverse((o) => (o as THREE.Mesh).isMesh && all.push(o as THREE.Mesh));
+  const limb = [...p.legs, ...p.arms];
+  return {
+    scale: SCALE,
+    body: bakeMeshes(all.filter((m) => !under(m, limb) && m.material !== p.M.helmet), p.body),
+    /** 흰색으로 구워 둔다(사람마다 색은 instanceColor) */
+    helmet: bakeMeshes(all.filter((m) => m.material === p.M.helmet), p.body, 0xffffff),
+    leg: bakeMeshes(all.filter((m) => under(m, [p.legs[0]])), p.legs[0]),
+    arms: p.arms.map((a) => bakeMeshes(all.filter((m) => under(m, [a])), a)),
+    legAt: p.legs.map((l) => l.position.clone()),
+    armAt: p.arms.map((a) => a.position.clone()),
+  };
 }
 
 export function createAvatar(look: Look = {}) {

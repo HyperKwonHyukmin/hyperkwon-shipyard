@@ -1,0 +1,23 @@
+// 울산조선소 이야기 Worker 설정. 화면(dist)과 다중 접속 서버(worker/index.ts)를 한 Worker 로 배포합니다.
+// 비밀값은 없습니다. 로그인 없는 공개 사이트입니다(비공식 표기는 화면에).
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "hyperkwon-shipyard",
+  "main": "./worker/index.ts",
+  "compatibility_date": "2026-10-01",
+  // 화면 파일은 Worker 를 거치지 않고 바로 나갑니다. /ws(다중 접속)와 /api(접속 숫자)만 Worker 가 받습니다.
+  "assets": { "directory": "./dist", "binding": "ASSETS", "run_worker_first": ["/ws", "/api/*"] },
+  // 처음에는 workers.dev 주소로 엽니다. 커스텀 도메인을 붙이면 false 로 바꿉니다.
+  "workers_dev": true,
+  "preview_urls": false,
+  // 방(장소별)과 접속 숫자. 무료 플랜이라 SQLite 방식 Durable Object 로 둡니다.
+  "durable_objects": {
+    "bindings": [
+      { "name": "ROOM", "class_name": "Room" },
+      { "name": "STATS", "class_name": "Stats" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room", "Stats"] }],
+  // 요청 기록에 닉네임이 남지 않게: 닉네임은 주소가 아니라 WebSocket 메시지로만 받습니다.
+  "observability": { "enabled": true }
+}

@@ -13,12 +13,13 @@ import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js
 import type { Station } from './content/stations';
 import { doorOf, FOOTPRINT, SHEDS } from './layout';
 import { createAvatar, type Avatar } from './avatar';
+import { loadMe } from './net';
 
 type Box = [number, number, number, number]; // x0, x1, z0, z1
 
 // 2026-11-15 사용자(휴대폰 시험): "조선소가 너무 방대한데 자전거나 뛰는 속도가 너무 느리다" → 5·10·15 에서 올림.
 // 실제 사람 속도보다 빠르지만, 야드 끝에서 끝(약 1.5 km)을 자전거로 50 초쯤에 가게 했다. 먼 단계는 단계 바로 순간 이동
-const SPEED = { walk: 6, run: 16, bike: 30 };
+const SPEED = { walk: 6, run: 16, bike: 55 };
 const RADIUS = 0.9;
 const NEAR = 42; // 이 거리 안에 들어오면 그 장소를 고른다
 const TALK = 12; // 이 거리 안이면 'E' 안내
@@ -55,7 +56,7 @@ function tube(parent: THREE.Object3D, a: [number, number, number], b: [number, n
  * 자전거(2026-11-14 사용자 요청으로 작업차에서 되돌림): 바퀴(타이어·림·살), 다이아몬드 프레임, 핸들, 안장, 앞 바구니. 앞 = +x.
  * 크기는 어른 자전거(바퀴 지름 약 0.9 m, 안장 높이 약 1.07 m). 사람은 BIKE_SEAT 자리에 앉힌다.
  */
-function buildBike() {
+export function buildBike() {
   const g = new THREE.Group();
   const frame = new THREE.MeshStandardMaterial({ color: 0x1f6fb5, roughness: 0.35, metalness: 0.5 });
   const tire = std(0x1b1d21, 0.9);
@@ -96,7 +97,7 @@ function buildBike() {
   return { g, wheels };
 }
 /** 사람을 앉힐 자리: 엉덩이(다리 회전축, 사람 기준 0.56 m)가 안장 위에 오게 */
-const BIKE_SEAT = new THREE.Vector3(-0.34, 0.56, 0);
+export const BIKE_SEAT = new THREE.Vector3(-0.34, 0.56, 0);
 
 interface Options {
   scene: THREE.Scene;
@@ -125,7 +126,7 @@ export function createWalk(o: Options) {
   const player = new THREE.Group();
   player.visible = false;
   o.scene.add(player);
-  const me = createAvatar({ helmet: 'yellow' });
+  const me = createAvatar({ helmet: loadMe().helmet });
   player.add(me.group);
   const bike = buildBike();
   bike.g.visible = false;
@@ -543,6 +544,13 @@ export function createWalk(o: Options) {
     /** 주인공이 선 자리(위에서 보기에서 돌아올 때) */
     get position() {
       return player.position;
+    },
+    /** 주인공이 보는 방향(앞 = +x)과 자전거 여부 — 다른 접속자에게 보낼 값 */
+    get heading() {
+      return player.rotation.y;
+    },
+    get riding() {
+      return riding;
     },
   };
 }

@@ -1,0 +1,39 @@
+# main 에 push 하면 화면(dist)과 다중 접속 서버(worker/index.ts)를 Cloudflare Workers(hyperkwon-shipyard)로 배포합니다.
+# 필요한 Secrets: CLOUDFLARE_API_TOKEN("Edit Cloudflare Workers" 템플릿), CLOUDFLARE_ACCOUNT_ID
+# 두 값이 없으면 빌드만 확인하고 배포는 건너뜁니다(실패로 표시하지 않음).
+name: Deploy
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      WRANGLER_SEND_METRICS: "false"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: 형 검사와 빌드
+        run: npm run build
+      - name: Workers 배포
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::notice::Cloudflare Secrets 가 없어 배포를 건너뜁니다."
+            exit 0
+          fi
+          npx wrangler deploy

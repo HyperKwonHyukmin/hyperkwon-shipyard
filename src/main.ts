@@ -37,6 +37,8 @@ import { createOperate } from './operate';
 import { createQuickTour } from './quicktour';
 import { fillFactories } from './factory/fill';
 import { createCrowd } from './crowd';
+import { createNet, HELMETS, nameOf, randomName, type Helmet } from './net';
+import { createPeers } from './peers';
 import { createDockWork } from './dockwork';
 import { concreteTexture, shedWallTextures } from './textures';
 
@@ -851,6 +853,83 @@ walk = createWalk({
     if (open) tour.setCollapsed(false);
   },
 });
+// ── 다중 접속(2026-11-17): 접속한 사람은 어느 장소에 있든 서로 보이고 핑·손 흔들기. 서버가 없으면 아무것도 안 보인다 ──
+const mpEl = document.getElementById('mp');
+const mpN = document.getElementById('mp-n');
+/** 접속 수 글자와 단계 바 칩의 인원 표시(칩은 장소를 옮길 때 다시 그려지므로 0.3초마다도 맞춘다) */
+function mpDraw() {
+  if (!mpEl || !mpN) return;
+  mpEl.hidden = !net.online;
+  // 처음 들어온 사람: 서버에 붙으면 별명 창을 한 번 띄운다(임의로 지은 별명이 채워져 있고 고칠 수 있다)
+  if (net.online && !net.me.name && !mpAsked) {
+    mpAsked = true;
+    mpAsk?.();
+  }
+  const hereN = net.countAt(STATIONS[tour.current]?.id ?? '');
+  const text = (net.all > 1 ? `접속 ${net.all}명` : '지금은 나 혼자') + (hereN ? ` · 이 장소에 ${hereN + 1}명` : '') + (peers.extra ? ` · 화면에는 가까운 30명` : '');
+  if (mpN.textContent !== text) mpN.textContent = text;
+  document.querySelectorAll<HTMLButtonElement>('#steps button[data-i]').forEach((b) => {
+    const n = net.online ? net.countAt(STATIONS[Number(b.dataset.i)]?.id ?? '') : 0;
+    if (n) b.dataset.n = String(n);
+    else delete b.dataset.n;
+  });
+}
+let mpAsked = false;
+let mpAsk: (() => void) | null = null;
+const net = createNet({
+  onChange: mpDraw,
+  onPing: (p, x, z) => peers.ping(nameOf(p), x, z),
+  onWave: (p) => peers.wave(p.id),
+});
+const peers = createPeers(scene, camera, STATIONS, net);
+if (params.has('mp')) Object.assign(window, { __net: net, __peers: peers });
+document.getElementById('mp-ping')?.addEventListener('click', () => {
+  // 걷는 중이면 내가 선 자리, 조감이면 내가 보는 곳
+  const at = walk?.active ? walk.position : controls.target;
+  net.ping(at.x, at.z);
+  peers.ping('나', at.x, at.z);
+});
+document.getElementById('mp-wave')?.addEventListener('click', () => net.wave());
+{
+  const box = document.getElementById('mp-set');
+  const name = document.getElementById('mp-name') as HTMLInputElement | null;
+  const hel = document.getElementById('mp-helmets');
+  const COLOR: Record<Helmet, [string, string]> = { yellow: ['#f2c21a', '노랑'], white: ['#f1f1ec', '하양'], orange: ['#e2661c', '주황'], blue: ['#2f62a8', '파랑'] };
+  let pick: Helmet = net.me.helmet;
+  if (box && name && hel) {
+    hel.innerHTML = HELMETS.map((h) => `<button type="button" data-h="${h}" style="background:${COLOR[h][0]}" aria-label="${COLOR[h][1]}" aria-pressed="false"></button>`).join('');
+    const mark = () => hel.querySelectorAll<HTMLButtonElement>('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.h === pick)));
+    hel.addEventListener('click', (e) => {
+      const h = (e.target as HTMLElement).dataset?.h as Helmet | undefined;
+      if (h) {
+        pick = h;
+        mark();
+      }
+    });
+    const head = document.getElementById('mp-head');
+    const show = (first: boolean) => {
+      name.value = net.me.name || randomName();
+      pick = net.me.helmet;
+      mark();
+      if (head) head.textContent = first ? '다른 견학자에게 보일 별명을 정해 주세요' : '별명과 안전모 색';
+      box.hidden = false;
+    };
+    mpAsk = () => show(true);
+    document.getElementById('mp-me')?.addEventListener('click', () => show(false));
+    document.getElementById('mp-roll')?.addEventListener('click', () => (name.value = randomName()));
+    // 닫기: 별명이 아직 없으면 지어 준 별명을 그대로 쓴다(다시 묻지 않게). 있으면 바꾸지 않는다
+    document.getElementById('mp-cancel')?.addEventListener('click', () => {
+      if (!net.me.name) net.setMe(name.value || randomName(), pick);
+      box.hidden = true;
+    });
+    document.getElementById('mp-ok')?.addEventListener('click', () => {
+      net.setMe(name.value.trim() || randomName(), pick);
+      box.hidden = true;
+    });
+    // 이름을 치는 동안 방향키·단축키가 화면으로 새지 않게
+    name.addEventListener('keydown', (e) => e.stopPropagation());
+  }
+}
 // 부딪히는 물건(고깔·드럼통·상자): 주인공, 자전거, 트랜스포터가 치면 밀려나고 구른다
 const props = createProps(scene, STATIONS, walk.blocked);
 /** 이번 프레임의 트랜스포터 자리와 속도(걷는 동안만 채움) */
@@ -871,6 +950,8 @@ function setWalk(on: boolean, at?: [number, number]) {
 }
 walkBtn?.addEventListener('click', () => setWalk(!walk!.active));
 document.getElementById('p-toggle')?.addEventListener('click', () => document.body.classList.remove('walk-info'));
+// 휴대폰: 접힌 패널은 보이지 않고, '설명' 단추로 연다(2026-11-17)
+document.getElementById('info-btn')?.addEventListener('click', () => tour.setCollapsed(false));
 // ── 휴대폰 메뉴(2026-11-15 사용자: "휴대폰에서 각 메뉴가 직관적이지 않다"): 자주 안 쓰는 단추는 '메뉴' 안으로 ──
 {
   const ctl = document.querySelector('.controls')!;
@@ -1111,6 +1192,7 @@ renderer.setAnimationLoop(() => {
   liveTimer -= dt;
   if (liveTimer <= 0) {
     liveTimer = 0.3;
+    mpDraw();
     if (launch.active && hudStatus) hudStatus.textContent = `도크: 진수 — ${launch.status()}`;
     // 도크 비계는 앉은 블록 옆에만, 진수 중에는 철거. 도크 바닥·비계 위 사람도 같이
     dockWork.update(erection.placed(), launch.active);
@@ -1124,6 +1206,11 @@ renderer.setAnimationLoop(() => {
   }
   if (atDock) liftLab.update(dt);
   if (dayNight.mode === 'night') fog.update(dt, t);
+  // 다중 접속: 보고 있는 장소를 알리고, 걷는 동안만 자리를 보낸다
+  net.setStation(here);
+  if (walk?.active) net.setPos(walk.position.x, walk.position.z, walk.heading, walk.riding ? 2 : 1);
+  else net.setPos(0, 0, 0, 0);
+  peers.update(dt);
   quick.update(dt);
   tour.update(dt);
   yard.fadeLabels(camera.position, tour.current);
