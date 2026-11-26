@@ -1235,15 +1235,50 @@ if (matchMedia('(pointer: coarse)').matches) {
     const t = b.textContent ?? '';
     if (b.children.length === 0 && KEY.test(t)) b.textContent = t.replace(KEY, '');
   };
+  // 안내 문장의 키보드 말도 단추 말로(2026-11-26: "이음 위에서 Space 를 누르고 있으면"). 단추 이름(가열·올림·내림…)과 맞춘다
+  const WORDS: [RegExp, string][] = [
+    [/방향키·WASD 이동 · R 올림 · F 내림 · Space 걸기·내려놓기 · 목표 근처에서 키를 놓으면/g, '화살표 단추로 이동 · 목표 근처에서 손을 떼면'],
+    [/방향키로 밀고 R·F 로 올리고 내립니다/g, '화살표 단추로 밀고 올림·내림으로 올리고 내립니다'],
+    [/방향키로/g, '화살표 단추로'],
+    [/방향키 /g, '화살표 단추로 '],
+    [/Space 를 누르고 있으면/g, '단추를 누르고 있으면'],
+    [/\bR 로 /g, '올림으로 '],
+    [/\bF 로 /g, '내림으로 '],
+    [/\bF 를 /g, '내림을 '],
+    [/Space 로 /g, ''],
+    [/Space /g, ''],
+  ];
+  const words = (n: Node) => {
+    const t = n.textContent ?? '';
+    if (!/Space|방향키|[RF] [로를]/.test(t)) return;
+    let s = t;
+    for (const [re, to] of WORDS) s = s.replace(re, to);
+    if (s !== t) n.textContent = s;
+  };
+  const walkText = (root: Node) => {
+    if (root.nodeType === Node.TEXT_NODE) return words(root); // el.textContent = … 는 글자 마디 하나를 새로 붙인다
+    const it = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let n = it.nextNode(); n; n = it.nextNode()) words(n);
+  };
   document.querySelectorAll('button').forEach(fix);
+  walkText(document.body);
   new MutationObserver((ms) => {
     for (const m of ms) {
       const el = m.target instanceof Element ? m.target : m.target.parentElement;
       const b = el?.closest('button');
       if (b) fix(b);
-      for (const n of m.addedNodes) if (n instanceof Element) n.querySelectorAll('button').forEach(fix);
+      if (m.type === 'characterData') words(m.target);
+      for (const n of m.addedNodes) {
+        if (n instanceof Element) n.querySelectorAll('button').forEach(fix);
+        walkText(n);
+      }
     }
   }).observe(document.body, { subtree: true, childList: true, characterData: true });
+}
+// 제목 띠 아래 끝(휴대폰에서 접속자 줄이 두 줄로 늘면 걷기 작은 지도를 그만큼 내린다)
+{
+  const hud = document.querySelector<HTMLElement>('.hud');
+  if (hud) new ResizeObserver(() => document.body.style.setProperty('--hud-b', hud.getBoundingClientRect().bottom + 'px')).observe(hud);
 }
 // ── 크레인 운전 체험(2026-11-14): 자동 탑재를 멈추고 다음 블록을 직접 올린다(operate.ts) ──
 const operate = createOperate({
@@ -1344,10 +1379,10 @@ const quick = createQuickTour({
     } else if (id === 'launch' && !launch.active && erection.placed() < blocks.length) erection.setPlaced(blocks.length);
   },
   more: [
+    { label: '내 배 한 척 지어 보기', run: () => build.offer() },
     { label: '크레인 운전해 보기', run: () => startOperate() },
     { label: '직접 진수해 보기', run: () => startLaunchTry() },
     { label: '설계동 — 선체 거더 굽힘', run: () => tour.go(STATIONS.findIndex((s) => s.id === 'design')) },
-    { label: '정문·역사관', run: () => tour.go(STATIONS.findIndex((s) => s.id === 'gate')) },
     { label: '블록 인양 학습', run: () => { tour.go(DOCK_INDEX); setTimeout(() => tour.flyTo(liftLab.view.cam, liftLab.view.look), 1800); } },
   ],
   onStart: () => tour.setCollapsed(true),
@@ -1484,8 +1519,9 @@ const opening = createOpening({
     tour.stop();
     if (params.has('qt')) quick.start();
     else if (autoTour) {
-      tour.go(0, true); // 오프닝은 도크의 노을 장면, 견학은 0번 역사관부터(2026-11-26)
-      build.offer();
+      // 2026-11-26 휴대폰 점검: 첫 화면에 짓기 카드·체험 단추가 한꺼번에 떠 무엇부터 할지 몰랐다 →
+      // 오프닝 다음은 0번부터 빠른 견학 하나만, '한 척 짓기'는 한 바퀴 끝에 권한다(단추로는 언제든)
+      quick.start();
     }
     else tour.go(DOCK_INDEX, true);
   },

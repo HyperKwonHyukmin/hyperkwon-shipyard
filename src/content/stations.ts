@@ -72,6 +72,7 @@ const S = {
 export const STATIONS: Station[] = [
   {
     id: 'gate',
+    quick: '1972년 미포만 백사장에서 시작한 조선소입니다. 여기서부터 배 한 척이 지어지는 순서를 따라갑니다.',
     name: '정문·역사관',
     processes: [],
     summary:
@@ -89,6 +90,7 @@ export const STATIONS: Station[] = [
   },
   {
     id: 'design',
+    quick: '배는 도면에서 먼저 태어납니다. 기본설계·상세설계를 거쳐 공장에서 쓸 블록 단위 도면(생산설계)이 됩니다.',
     name: '설계동',
     processes: ['수주·설계'],
     summary:

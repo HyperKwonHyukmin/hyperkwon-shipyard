@@ -217,7 +217,16 @@ export function createTour(opt: TourOptions) {
     // 지금 단계를 바 가운데로(페이지는 스크롤하지 않게 바 안에서만)
     const b = stepsEl.children[i] as HTMLElement | undefined;
     if (b) stepsEl.scrollLeft = b.offsetLeft - (stepsEl.clientWidth - b.offsetWidth) / 2;
+    edgeSteps();
   }
+  /** 옆으로 밀 칩이 더 있는 쪽 표시(휴대폰에서 5~10번 칩이 화면 밖이라 있는 줄 몰랐다, 2026-11-26) */
+  function edgeSteps() {
+    const max = stepsEl.scrollWidth - stepsEl.clientWidth;
+    stepsEl.classList.toggle('more-l', stepsEl.scrollLeft > 2);
+    stepsEl.classList.toggle('more-r', stepsEl.scrollLeft < max - 2);
+  }
+  stepsEl.addEventListener('scroll', edgeSteps, { passive: true });
+  window.addEventListener('resize', edgeSteps);
   stepsEl.addEventListener('click', (e) => {
     const b = (e.target as Element).closest('[data-i]');
     if (b) go(Number(b.getAttribute('data-i')));

@@ -16,7 +16,10 @@ interface Leg {
 }
 /** 순환 길이: 가공 75초, 조립 130, PE장 190, 도장 60, 블록 하나 탑재 약 40, 진수 약 86, 안벽 190, 시운전 165, 명명식 90 */
 // 2026-11-22 검토 "투어가 느리다": 머무는 시간을 약 0.72배로 줄이고 그만큼 배속을 올렸다(한 바퀴 약 3분 20초)
+// 2026-11-26 사용자: "시작은 무조건 0번에서" — 정문·역사관과 설계동부터(움직임이 적은 곳이라 배속 1, 짧게). 한 바퀴 약 3분 50초
 const LEGS: Leg[] = [
+  { id: 'gate', sec: 14, speed: 1 },
+  { id: 'design', sec: 16, speed: 1 },
   { id: 'cutting', sec: 20, speed: 4.2 },
   { id: 'assembly', sec: 23, speed: 5.6 },
   { id: 'pe', sec: 24, speed: 8.3 },
@@ -118,7 +121,7 @@ export function createQuickTour(o: QuickTourOptions) {
     doneEl.innerHTML = `
       <h3>한 바퀴 끝 — 강판이 배가 되어 떠나기까지 ${min}분 ${sec}초</h3>
       <p>더 볼 곳</p>
-      <div class="qt-more">${o.more.map((m, i) => `<button type="button" class="btn" data-m="${i}">${esc(m.label)}</button>`).join('')}
+      <div class="qt-more">${o.more.map((m, i) => `<button type="button" class="btn${i === 0 ? ' primary' : ''}" data-m="${i}">${esc(m.label)}</button>`).join('')}
         <button type="button" class="btn" data-again>처음부터 다시</button>
         <button type="button" class="btn" data-close>닫기</button></div>`;
     doneEl.querySelectorAll<HTMLButtonElement>('[data-m]').forEach((b) =>
