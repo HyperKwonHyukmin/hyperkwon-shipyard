@@ -397,9 +397,9 @@ export function createTour(opt: TourOptions) {
     }
   }
 
-  // 시작 장소: 주소의 #id, 없으면 도크
+  // 시작 장소: 주소의 #id, 없으면 0번(역사관, 2026-11-26 사용자: "시작은 무조건 0번에서")
   const fromHash = stations.findIndex((s) => `#${s.id}` === location.hash);
-  const start = fromHash >= 0 ? fromHash : stations.findIndex((s) => s.id === 'dock');
+  const start = fromHash >= 0 ? fromHash : 0;
   if (opt.placeCamera) go(start, true);
   else {
     current = start;

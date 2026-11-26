@@ -136,7 +136,10 @@ export function createWalk(o: Options) {
   const seniors: Avatar[] = [];
   const spots = stations.map((s) => {
     const v = VIEWPOINT[s.id];
-    const [x, z] = v ?? doorOf(s.at).front;
+    let [x, z] = v ?? doorOf(s.at).front;
+    // 2026-11-26 사용자: "설계 칸에서 자꾸 이상한 곳에 갇혀" — 길 가장자리 밖 6 m 자리가 설계동 수조(z 24~42, 아래 '막힌 자리') 안이라
+    // 순간 이동하면 사방이 막혔다. 수조 앞 길 쪽으로 당긴다
+    if (s.id === 'design') z = Math.min(z, 24 - RADIUS - 1.5);
     return { x, z };
   });
   {

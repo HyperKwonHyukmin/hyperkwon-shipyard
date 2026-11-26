@@ -500,7 +500,10 @@ scene.add(ship);
 const dockWork = createDockWork(scene, blocks, { floorY: -DOCK.depth });
 const params = new URLSearchParams(location.search);
 const still = params.has('still');
-/** 처음 연 주소의 #장소(둘러보기가 곧 #dock 를 써 넣으므로 먼저 기억) */
+// 2026-11-26 사용자: "시작은 무조건 0번에서" — 확인용 옵션(?cam=·?walk 등)이 없는 주소로 들어오면
+// 지난번에 보던 장소(#id, 둘러보기가 써 넣음)를 버리고 0번 역사관부터 시작한다
+if (!location.search && location.hash) history.replaceState(null, '', location.pathname);
+/** 처음 연 주소의 #장소(둘러보기가 곧 #id 를 써 넣으므로 먼저 기억) */
 const firstHash = location.hash;
 const startPlaced = (() => {
   const n = Number(params.get('blocks'));
@@ -1481,7 +1484,7 @@ const opening = createOpening({
     tour.stop();
     if (params.has('qt')) quick.start();
     else if (autoTour) {
-      tour.go(DOCK_INDEX, true);
+      tour.go(0, true); // 오프닝은 도크의 노을 장면, 견학은 0번 역사관부터(2026-11-26)
       build.offer();
     }
     else tour.go(DOCK_INDEX, true);
