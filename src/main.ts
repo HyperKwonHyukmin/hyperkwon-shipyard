@@ -1217,9 +1217,30 @@ document.getElementById('info-btn')?.addEventListener('click', () => tour.setCol
     more.textContent = o ? '닫기' : '메뉴';
   };
   more.addEventListener('click', () => setOpen(!ctl.classList.contains('open')));
+  // 2026-11-26 휴대폰 점검: 메뉴를 연 채 걷기·짓기에 들어가면 메뉴 단추가 조이스틱·걷기 단추 밑에 겹쳐 남았다 → 다른 모드로 가면 닫는다
+  new MutationObserver(() => {
+    if (ctl.classList.contains('open') && /\b(walking|operating|building|trying|turning|photo)\b/.test(document.body.className)) setOpen(false);
+  }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
   // 메뉴 안 단추를 누르면 닫는다(속도·소리처럼 여러 번 누르는 것은 그대로 둔다)
   for (const id of ['overview', 'menu-map', 'time']) document.getElementById(id)?.addEventListener('click', () => setOpen(false));
   document.getElementById('menu-map')?.addEventListener('click', () => document.getElementById('map-btn')?.click());
+}
+// ── 휴대폰(손가락): 단추 글자 앞 키 이름(Esc·Space·R·F·E·C)은 숨긴다(2026-11-26 휴대폰 점검: 키보드가 없는데 'Space 가열'·'R 올림') ──
+if (matchMedia('(pointer: coarse)').matches) {
+  const KEY = /^(Esc|Space|[A-Z])(\s·)?\s+(?=\S)/;
+  const fix = (b: Element) => {
+    const t = b.textContent ?? '';
+    if (b.children.length === 0 && KEY.test(t)) b.textContent = t.replace(KEY, '');
+  };
+  document.querySelectorAll('button').forEach(fix);
+  new MutationObserver((ms) => {
+    for (const m of ms) {
+      const el = m.target instanceof Element ? m.target : m.target.parentElement;
+      const b = el?.closest('button');
+      if (b) fix(b);
+      for (const n of m.addedNodes) if (n instanceof Element) n.querySelectorAll('button').forEach(fix);
+    }
+  }).observe(document.body, { subtree: true, childList: true, characterData: true });
 }
 // ── 크레인 운전 체험(2026-11-14): 자동 탑재를 멈추고 다음 블록을 직접 올린다(operate.ts) ──
 const operate = createOperate({

@@ -436,7 +436,7 @@ export function createOperate(o: OperateOptions) {
     held.clear();
     apply();
     placeFollowCamera();
-    say(`${hand!.name}: 녹색 윤곽 위로 옮겨 내리세요. 받침 가까이에서는 F 를 끊어 눌러 살살`, 6);
+    say(`${hand!.name}: 윤곽선 위로 옮겨 내리세요. 받침 가까이에서는 F 를 끊어 눌러 살살`, 6);
   }
 
   /** 블록이 앉았다 → 같은 장면에서 이음 맞추기. 시작 오차 = 그 블록의 제작 오차 × (세게·어긋나게 내려놓은 만큼) */
@@ -554,10 +554,19 @@ export function createOperate(o: OperateOptions) {
       focus.set(h.x + FOCUS_DX, Math.max(0, hoist.pos - 6), h.z);
     }
   }
+  /* 휴대폰(2026-11-26 점검: 한 척 짓기 시점이 블록에 붙어 윤곽선이 조작판 뒤로 숨었다):
+     try-frame 의 phoneBack 처럼 뒤로 빼고, 보는 점을 내려 블록이 조작판 위쪽에 오게 한다 */
+  const aimDrop = new THREE.Vector3();
   function placeFollowCamera() {
     setFocus();
-    controls.target.copy(focus);
-    camera.position.copy(focus).add(quick ? CAM_OFF_Q : CAM_OFF);
+    const off = (quick ? CAM_OFF_Q : CAM_OFF).clone();
+    aimDrop.set(0, 0, 0);
+    if (window.innerWidth < 700) {
+      off.multiplyScalar(quick ? 2 : 1.3);
+      aimDrop.y = off.length() * 0.15;
+    }
+    controls.target.copy(focus).sub(aimDrop);
+    camera.position.copy(focus).add(off);
   }
 
   function enter(opt: { quick?: boolean } = {}) {
@@ -809,10 +818,10 @@ export function createOperate(o: OperateOptions) {
             ? gap > 0.05
               ? aligned
                 ? '3/3 천천히 내려 앉히기'
-                : '2/3 들어 올려 녹색 윤곽 위로'
+                : '2/3 들어 올려 윤곽선 위로'
               : aligned
                 ? '받침에 닿음 — 맞으면 Space 로 내려놓기'
-                : '2/3 R 로 들어 올려 녹색 윤곽 위로' // 건 직후(아직 트랜스포터 위)에는 내려놓기가 아니라 들어 올리기다
+                : '2/3 R 로 들어 올려 윤곽선 위로' // 건 직후(아직 트랜스포터 위)에는 내려놓기가 아니라 들어 올리기다
             : '안착 완료';
       actBtn.textContent = phase === 'approach' ? 'Space 걸기' : 'Space 내려놓기';
       actBtn.hidden = phase === 'done' || (quick && phase === 'hooked');
@@ -825,7 +834,7 @@ export function createOperate(o: OperateOptions) {
               ? '앉는 중…'
               : '걸렸습니다 — R 로 들어 올려 다시 맞추기'
             : !aligned
-              ? '녹색 윤곽 위로 옮기기'
+              ? '윤곽선 위로 옮기기(맞으면 초록)'
               : gap > 2.5
                 ? '내리기(F)'
                 : '살살 — F 를 끊어 눌러 앉히기';
@@ -840,7 +849,7 @@ export function createOperate(o: OperateOptions) {
       /* 세팅으로 넘어가는 프레임, 가용접한 뒤: 이음을 보던 자리에 머문다 */
     } else if (view === 'follow') {
       setFocus();
-      const d = focus.clone().sub(controls.target);
+      const d = focus.clone().sub(aimDrop).sub(controls.target);
       // quick 모드는 조금 늦게 따라가 움직임이 느껴지게 한다
       if (quick) d.multiplyScalar(1 - Math.exp(-dt * 7));
       controls.target.add(d);

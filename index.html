@@ -374,6 +374,10 @@
         .controls .btn, .acts .btn, .nav .btn { min-height: 44px !important; }
         .acts { max-width: 100vw; padding: 0 28px 0 8px; box-sizing: border-box; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 34px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 34px), transparent); }
         .acts .hold-cap { flex: 0 0 auto; max-width: 78vw; text-align: left; }
+        /* 2026-11-26 휴대폰 점검: 메뉴를 펼치면 '해 볼 것' 줄이 메뉴 단추 위에 겹쳤다 → 메뉴가 열린 동안 숨김 */
+        body:has(.controls.open) .acts { display: none; }
+        /* 걷기 작은 지도가 위 제목 띠의 '여기요·손 흔들기' 줄을 덮었다 → 띠 아래로 */
+        .walking .minimap { top: 118px; }
       }
       /* 한 척 짓기(build.ts): 위쪽 가운데 카드 */
       .build-hud { position: fixed; left: 50%; top: 62px; transform: translateX(-50%); z-index: 15; box-sizing: border-box; width: min(94vw, 560px); padding: 12px 14px;
