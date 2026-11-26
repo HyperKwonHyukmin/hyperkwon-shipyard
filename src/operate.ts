@@ -2,6 +2,7 @@
  * 골리앗 크레인 운전 체험(2026-11-14, 검토 추천 ①). 자동 탑재를 멈추고 지금 차례의 블록을 사용자가 직접 올린다.
  * 1) 훅을 적치장 트랜스포터 위 블록으로 옮겨 걸기 → 2) 들어 올려 도크의 녹색 표시 위로 → 3) 흔들림을 잡으며 천천히 내려 앉히기.
  * 결과는 점수가 아니라 현장에서 보는 숫자(수평 오차, 닿을 때 하강 속도, 걸린 시간)로만 보여 준다(놀이 요소 없음 원칙).
+ * quick 모드(한 척 짓기): 블록을 건 채 제자리 앞에서 시작 → 내려 앉히면 같은 장면에서 이음 맞추기(세팅) → 가용접. 아래 quick 주석 참고.
  * 계산은 crane-calc.ts(순수 함수). 키: 방향키·WASD 이동(화면 기준), R 올림, F 내림, Space 걸기·내려놓기, C 시점, Esc 끝.
  * 2026-11-14 사용자 "어렵고 불편하다"로 고침: 기본 시점을 주행 방향 뒤 위에서 내려다보게(85 m 대각선 → 약 58°), 방향키는 화면에서 가장 가까운
  * 크레인 축 하나로만(대각선으로 미끄러지지 않게), 목표 근처에서 키를 놓으면 자석처럼 맞춰 줌, 목표까지 화면 방향 안내와 바닥 안내선.
@@ -50,6 +51,18 @@ export interface OperateOptions {
   truck: { x: number; hx: number; hz: number; top: number };
   hud: HTMLElement;
   onExit: () => void;
+  /** 블록이 앉은 순간의 결과(한 척 짓기가 받는다) */
+  onLanded?: (r: { name: string; off: number; touch: number; hard: boolean; sway: number; sec: number; fit: [number, number, number] | null }) => void;
+  /** 블록이 받침에 처음 닿은 순간(소리용) */
+  onImpact?: (speed: number, hard: boolean) => void;
+  /** quick 모드: 블록이 앉아 이음 맞추기로 넘어간 순간 */
+  onSeated?: (hard: boolean) => void;
+  /** quick 모드: 더 올릴 블록이 없을 때 */
+  onEmpty?: () => void;
+  /** quick 모드: 그 블록의 세팅 시작 오차(mm) [앞뒤 틈, 좌우 어긋남, 단차] */
+  fitStart?: (name: string) => [number, number, number];
+  /** quick 모드: 바람 세기(매단 점에 더하는 가속도 진폭 m/s²) */
+  wind?: () => number;
 }
 
 const rectOf = (b: THREE.Box3): Rect => ({
@@ -63,7 +76,25 @@ export function createOperate(o: OperateOptions) {
   const { camera, controls, rig } = o;
   let active = false;
   let view: 'follow' | 'cab' = 'follow';
-  let phase: 'approach' | 'hooked' | 'done' = 'approach';
+  let phase: 'approach' | 'hooked' | 'fit' | 'done' = 'approach';
+  /**
+   * quick 모드(한 척 짓기, 2026-11-22 재검토): 걸고 옮기는 긴 구간을 건너뛰고 블록을 건 채 제자리 앞에서 시작한다.
+   * 앉으면 같은 장면에서 이음을 맞춘다(세팅): 잭·체인블록으로 mm 단위로 밀어 세 눈금을 허용 오차 안에 넣고 가용접.
+   * 세게·어긋나게 내려놓으면 이음이 더 벌어진 채 시작한다(실수가 글자가 아니라 할 일로 돌아온다).
+   */
+  let quick = false;
+  const FITQ = { tol: 3, speed: 9, accel: 40, brake: 18, range: 40, draw: 20 }; // mm, mm/s, mm/s². draw = 화면에서 과장해 그리는 배율
+  const fx: Axis = { pos: 0, vel: 0 };
+  const fz: Axis = { pos: 0, vel: 0 };
+  const fy: Axis = { pos: 0, vel: 0 };
+  /** 크레인이 내려놓은 자리에서 제자리로 미끄러져 들어가는 남은 거리 */
+  const settle = { x: 0, z: 0 };
+  let landOff = 0;
+  let hardHit = false;
+  let resting = false;
+  let restT = 0;
+  let askT = 0;
+  let fly: { k: number; p0: THREE.Vector3; t0: THREE.Vector3; p1: THREE.Vector3; t1: THREE.Vector3 } | null = null;
   let hand: Hand | null = null;
   const travel: Axis = { pos: 0, vel: 0 };
   const trol: Axis = { pos: 0, vel: 0 };
@@ -84,6 +115,12 @@ export function createOperate(o: OperateOptions) {
   const outline = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)), outlineMat);
   outline.renderOrder = 10;
   marks.add(outline);
+  // 세팅: 블록이 지금 놓인 자리의 테두리(어긋났으면 주황, 맞으면 초록). 제자리 테두리(outline)에 겹치게 밀어 넣는다
+  const ghostMat = new THREE.LineBasicMaterial({ color: 0xff7a3c, transparent: true, opacity: 0.95, depthTest: false });
+  const ghost = new THREE.LineSegments(outline.geometry, ghostMat);
+  ghost.renderOrder = 11;
+  ghost.visible = false;
+  marks.add(ghost);
   const ringGeo = new THREE.RingGeometry(0.8, 1.2, 32);
   ringGeo.rotateX(-Math.PI / 2);
   const ringMat = new THREE.MeshBasicMaterial({ color: 0xffd400, transparent: true, opacity: 0.85, depthTest: false });
@@ -101,6 +138,52 @@ export function createOperate(o: OperateOptions) {
   guide.renderOrder = 10;
   guide.frustumCulled = false;
   marks.add(guide);
+  // 닿는 순간·가용접 순간에 바닥으로 퍼지는 고리
+  const pulseGeo = new THREE.RingGeometry(0.86, 1, 48);
+  pulseGeo.rotateX(-Math.PI / 2);
+  const pulseMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthTest: false, side: THREE.DoubleSide });
+  const pulse = new THREE.Mesh(pulseGeo, pulseMat);
+  pulse.renderOrder = 11;
+  pulse.visible = false;
+  pulse.frustumCulled = false;
+  marks.add(pulse);
+  let pulseT = 0;
+  let pulseSize = 1;
+  function pulseAt(x: number, y: number, z: number, color: number, size: number) {
+    pulse.position.set(x, y + 0.25, z);
+    pulseMat.color.setHex(color);
+    pulseT = 0.7;
+    pulseSize = size;
+    pulse.visible = true;
+  }
+  // 충격 착지: 화면 흔들림(움직임 줄이기 설정이면 흔들지 않는다)
+  const calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const shakeOff = new THREE.Vector3();
+  let shakeT = 0;
+  let shakeAmp = 0;
+  function shake(amp: number) {
+    if (calm) return;
+    shakeT = 0.45;
+    shakeAmp = amp;
+  }
+  /** 효과 한 걸음(고리, 흔들림). 카메라 자리를 정한 뒤에 부른다 */
+  function tickFx(dt: number) {
+    if (pulseT > 0) {
+      pulseT -= dt;
+      const k = 1 - Math.max(0, pulseT) / 0.7;
+      const s = (3 + 20 * k) * pulseSize;
+      pulse.scale.set(s, 1, s);
+      pulseMat.opacity = (1 - k) * 0.9;
+      if (pulseT <= 0) pulse.visible = false;
+    }
+    camera.position.sub(shakeOff);
+    if (shakeT > 0) {
+      shakeT -= dt;
+      const a = shakeAmp * Math.max(0, shakeT / 0.45);
+      shakeOff.set((Math.random() - 0.5) * a, (Math.random() - 0.5) * a, (Math.random() - 0.5) * a);
+    } else shakeOff.set(0, 0, 0);
+    camera.position.add(shakeOff);
+  }
 
   // ── 안내 화면 ──
   o.hud.innerHTML = `
@@ -116,6 +199,12 @@ export function createOperate(o: OperateOptions) {
       <div><dt>흔들림</dt><dd id="op-sway">–</dd></div>
       <div><dt>권상 속도</dt><dd id="op-hv">–</dd></div>
     </dl>
+    <div class="op-fit" id="op-fit" hidden>
+      <div class="fg"><span>앞뒤 틈</span><div class="fg-bar"><i></i><b id="fg-x"></b></div><output id="fo-x"></output></div>
+      <div class="fg"><span>좌우 어긋남</span><div class="fg-bar"><i></i><b id="fg-z"></b></div><output id="fo-z"></output></div>
+      <div class="fg"><span>단차(높이)</span><div class="fg-bar"><i></i><b id="fg-y"></b></div><output id="fo-y"></output></div>
+      <small>방향키로 밀고 R·F 로 올리고 내립니다. 놓아도 조금 더 밀립니다. 주황 테두리(지금 자리)를 초록 테두리(제자리)에 겹치세요. 어긋남은 화면에서 20배 과장해 그렸고, 교육용 예시입니다.</small>
+    </div>
     <p class="op-note" id="op-note" role="status"></p>
     <div class="op-pad" aria-label="운전 버튼">
       <button type="button" class="btn" data-k="left" aria-label="왼쪽">◀</button>
@@ -138,6 +227,13 @@ export function createOperate(o: OperateOptions) {
   const actBtn = $('op-act') as HTMLButtonElement;
   const resultEl = $('op-result');
   const viewBtn = $('op-view');
+  const fitEl = $('op-fit');
+  const gauges = (['x', 'z', 'y'] as const).map((k) => ({ dot: $('fg-' + k), out: $('fo-' + k), row: $('fg-' + k).closest<HTMLElement>('.fg')! }));
+  function setFitHud(on: boolean) {
+    fitEl.hidden = !on;
+    o.hud.classList.toggle('fitting', on);
+    if (!on) ghost.visible = false;
+  }
   o.hud.hidden = true;
 
   // ── 입력 ──
@@ -154,7 +250,7 @@ export function createOperate(o: OperateOptions) {
     } else if (k === ' ') {
       act();
       e.preventDefault();
-    } else if (k === 'c') toggleView();
+    } else if (k === 'c' && !quick) toggleView();
     else if (k === 'escape') o.onExit();
   });
   window.addEventListener('keyup', (e) => {
@@ -222,6 +318,16 @@ export function createOperate(o: OperateOptions) {
 
   function act() {
     if (!active || !hand) return;
+    if (phase === 'fit') {
+      const worst = Math.max(Math.abs(fx.pos), Math.abs(fz.pos), Math.abs(fy.pos));
+      if (worst > FITQ.tol && askT <= 0) {
+        askT = 3;
+        say(`아직 ${worst.toFixed(0)} mm 어긋나 있습니다. 한 번 더 누르면 이대로 가용접합니다(재작업이 생깁니다).`, 3);
+        return;
+      }
+      finishFit();
+      return;
+    }
     if (phase === 'approach') {
       const h = hookXZ();
       const dist = Math.hypot(h.x - hand.pickup.x, h.z - hand.pickup.z);
@@ -244,12 +350,23 @@ export function createOperate(o: OperateOptions) {
       const target = rectOf(hand.box);
       const off = Math.hypot(h.x - target.x, h.z - target.z);
       if (!touching) {
-        say('아직 공중입니다. 받침에 닿을 때까지 내리세요(F).');
-        return;
+        const gapNow = bottom - supportAt(h.x, h.z);
+        // 받침 바로 위(0.4 m 안)면 마저 내려 앉힌다(2026-11-22 검토: 0.2 m 앞에서 Space 가 반응이 없어 보였다 — 쉬운 조작이 먼저)
+        if (quick || gapNow > 0.4) {
+          say(`아직 공중입니다. 받침까지 ${gapNow.toFixed(1)} m — 더 내리세요(F).`, 3);
+          return;
+        }
+        hoist.pos -= gapNow;
+        hoist.vel = 0;
+        if (touchSpeed < 0) touchSpeed = 0;
       }
       const fit = fitCheck(off, h.sway, true);
       if (!fit.ok) {
         say(fit.why, 3);
+        return;
+      }
+      if (quick) {
+        beginFit();
         return;
       }
       o.erection.landed();
@@ -258,8 +375,10 @@ export function createOperate(o: OperateOptions) {
     }
   }
 
-  function showResult(off: number) {
-    const hard = touchSpeed > FIT.softTouch;
+  function showResult(off: number, fit: [number, number, number] | null = null) {
+    const hard = hardHit || touchSpeed > FIT.softTouch;
+    o.onLanded?.({ name: hand!.name, off, touch: touchSpeed, hard, sway: maxSway, sec: clock, fit });
+    if (quick) return; // 한 척 짓기에서는 그쪽 카드가 결과를 보여 준다
     resultEl.hidden = false;
     resultEl.innerHTML = `
       <h3>${hand!.name} 안착</h3>
@@ -281,7 +400,12 @@ export function createOperate(o: OperateOptions) {
     hand = o.erection.hand();
     phase = 'approach';
     clock = 0;
+    setFitHud(false);
+    hardHit = false;
+    resting = false;
+    fly = null;
     if (!hand) {
+      if (quick) o.onEmpty?.();
       say('26개를 모두 올렸습니다. 도크 패널의 건조 시점 막대로 되돌린 뒤 다시 해 볼 수 있습니다.', 8);
       marks.visible = false;
       return;
@@ -290,7 +414,127 @@ export function createOperate(o: OperateOptions) {
     outline.position.copy(b.getCenter(new THREE.Vector3()));
     outline.scale.copy(b.getSize(new THREE.Vector3()));
     marks.visible = true;
-    say(`${hand.name}: 적치장의 트랜스포터 위 블록으로 훅을 옮기세요`, 4);
+    if (quick) startQuick();
+    else say(`${hand.name}: 적치장의 트랜스포터 위 블록으로 훅을 옮기세요`, 4);
+  }
+
+  /** quick 모드의 시작: 블록을 건 채 제자리 22 m 앞, 이미 앉은 블록들보다 4 m 위에 와 있다 */
+  function startQuick() {
+    const b = hand!.box;
+    const t = rectOf(b);
+    let clear = Math.max(4, b.min.y + 8);
+    for (const p of o.erection.placedBoxes()) clear = Math.max(clear, p.max.y + 4);
+    travel.pos = THREE.MathUtils.clamp(t.x - 22, o.travel[0], o.travel[1]);
+    trol.pos = THREE.MathUtils.clamp(t.z + (t.z > 0 ? -6 : 6), -o.trolleyZ, o.trolleyZ);
+    hoist.pos = Math.min(rig.hookTop, clear + hand!.height);
+    travel.vel = trol.vel = hoist.vel = 0;
+    sway.ax = sway.az = sway.wx = sway.wz = 0;
+    phase = 'hooked';
+    touchSpeed = -1;
+    maxSway = 0;
+    restT = 0;
+    held.clear();
+    apply();
+    placeFollowCamera();
+    say(`${hand!.name}: 녹색 윤곽 위로 옮겨 내리세요. 받침 가까이에서는 F 를 끊어 눌러 살살`, 6);
+  }
+
+  /** 블록이 앉았다 → 같은 장면에서 이음 맞추기. 시작 오차 = 그 블록의 제작 오차 × (세게·어긋나게 내려놓은 만큼) */
+  function beginFit() {
+    if (!hand) return;
+    const b = hand.box;
+    const t = rectOf(b);
+    const p = hookXZ();
+    const f0 = o.fitStart?.(hand.name) ?? [12, -9, 6];
+    const k = (hardHit ? 1.6 : 1) * (1 + Math.min(1, landOff / 0.5));
+    const lim = FITQ.range - 4;
+    fx.pos = THREE.MathUtils.clamp(f0[0] * k, -lim, lim);
+    fz.pos = THREE.MathUtils.clamp(f0[1] * k, -lim, lim);
+    fy.pos = THREE.MathUtils.clamp(f0[2] * (hardHit ? 1.6 : 1), -lim, lim);
+    fx.vel = fz.vel = fy.vel = 0;
+    settle.x = p.x - t.x;
+    settle.z = p.z - t.z;
+    phase = 'fit';
+    askT = 0;
+    held.clear();
+    travel.vel = trol.vel = hoist.vel = 0;
+    sway.ax = sway.az = sway.wx = sway.wz = 0;
+    rig.setSway(0, 0);
+    setFitHud(true);
+    o.onSeated?.(hardHit);
+    // 이음 가까이로: 이미 앉은 블록들 쪽 끝을, 선체 안쪽 위에서 내려다본다
+    const placed = o.erection.placedBoxes();
+    const cx = placed.length ? placed.reduce((s, q) => s + (q.min.x + q.max.x) / 2, 0) / placed.length : t.x - 1;
+    const ex = cx < t.x ? b.min.x : b.max.x;
+    const into = cx < t.x ? 1 : -1;
+    const side = Math.abs(t.z) < 1 ? 1 : Math.sign(t.z);
+    const look = new THREE.Vector3(ex, b.max.y - Math.min((b.max.y - b.min.y) * 0.5, 2), t.z);
+    const cam = new THREE.Vector3(ex + into * 8, b.max.y + 8, t.z - side * 12);
+    fly = { k: 0, p0: camera.position.clone(), t0: controls.target.clone(), p1: cam, t1: look };
+    say(hardHit ? '충격 착지 — 블록이 밀려 이음이 더 벌어졌습니다. 세 눈금을 초록 안에 넣으세요.' : '앉았습니다. 세 눈금을 초록 안에 넣고 Space 로 가용접하세요.', 7);
+  }
+
+  /** 가용접: 블록을 제자리에 붙이고(용접 불꽃) 결과를 알린다 */
+  function finishFit() {
+    if (!hand) return;
+    const res: [number, number, number] = [Math.round(fx.pos), Math.round(fz.pos), Math.round(fy.pos)];
+    const ok = res.every((v) => Math.abs(v) <= FITQ.tol);
+    const t = rectOf(hand.box);
+    pulseAt(t.x, hand.box.max.y, t.z, ok ? 0x7cf08a : 0xffd400, 0.7);
+    setFitHud(false);
+    noteTime = 0;
+    o.erection.landed();
+    phase = 'done';
+    showResult(landOff, res);
+  }
+
+  /** 세팅 한 걸음: 잭·체인블록으로 블록을 mm 단위로 민다(관성이 있어 놓아도 조금 더 밀린다) */
+  function updateFit(dt: number, wx: number, wz: number, lift: number) {
+    clock += dt;
+    askT -= dt;
+    drive(fx, wx, FITQ.speed, FITQ.accel, dt, -FITQ.range, FITQ.range, FITQ.brake);
+    drive(fz, wz, FITQ.speed, FITQ.accel, dt, -FITQ.range, FITQ.range, FITQ.brake);
+    drive(fy, lift, FITQ.speed, FITQ.accel, dt, -FITQ.range, FITQ.range, FITQ.brake);
+    const k = Math.exp(-dt * 7);
+    settle.x *= k;
+    settle.z *= k;
+    const b = hand!.box;
+    const t = rectOf(b);
+    const s = FITQ.draw / 1000;
+    o.erection.carryAt(t.x + settle.x + fx.pos * s, b.max.y + fy.pos * s, t.z + settle.z + fz.pos * s);
+    let ok = true;
+    [fx, fz, fy].forEach((a, i) => {
+      const g = gauges[i];
+      const inside = Math.abs(a.pos) <= FITQ.tol;
+      if (!inside) ok = false;
+      g.dot.style.left = `${50 + THREE.MathUtils.clamp(a.pos / FITQ.range, -1, 1) * 50}%`;
+      g.row.classList.toggle('ok', inside);
+      const v = Math.round(a.pos);
+      const text = `${v > 0 ? '+' : ''}${v} mm`;
+      if (g.out.textContent !== text) g.out.textContent = text;
+    });
+    outlineMat.color.setHex(0x00e600);
+    ghost.visible = true;
+    ghost.scale.copy(outline.scale);
+    ghost.position.set(outline.position.x + settle.x + fx.pos * s, outline.position.y + fy.pos * s, outline.position.z + settle.z + fz.pos * s);
+    ghostMat.color.setHex(ok ? 0x00e600 : 0xff7a3c);
+    ring.visible = drop.visible = guide.visible = false;
+    stepEl.textContent = ok ? '이음이 맞았습니다 — Space 로 가용접' : '이음 맞추기 — 세 눈금을 초록 안으로';
+    actBtn.textContent = 'Space 가용접';
+    actBtn.hidden = false;
+    noteTime -= dt;
+    const text = noteTime > 0 ? note : '';
+    if (noteEl.textContent !== text) noteEl.textContent = text;
+    // 카메라: 이음 가까이로 날아간 뒤에는 그대로 둔다(끌어서 돌려 볼 수 있다)
+    if (fly) {
+      fly.k = Math.min(1, fly.k + dt / 0.8);
+      const e = fly.k * fly.k * (3 - 2 * fly.k);
+      camera.position.lerpVectors(fly.p0, fly.p1, e);
+      controls.target.lerpVectors(fly.t0, fly.t1, e);
+      shakeOff.set(0, 0, 0);
+      if (fly.k >= 1) fly = null;
+    }
+    tickFx(dt);
   }
 
   // ── 카메라 ──
@@ -301,16 +545,26 @@ export function createOperate(o: OperateOptions) {
    */
   const FOCUS_DX = -16;
   const CAM_OFF = new THREE.Vector3(-45, 72, 0);
+  /** quick 모드: 블록 바로 뒤 위에서 가까이. 흔들림이 보이도록 훅이 아니라 트롤리를 따라간다 */
+  const CAM_OFF_Q = new THREE.Vector3(-30, 19, 11);
+  function setFocus() {
+    if (quick) focus.set(travel.pos + 4, hoist.pos - (hand ? hand.height / 2 : 6), trol.pos);
+    else {
+      const h = hookXZ();
+      focus.set(h.x + FOCUS_DX, Math.max(0, hoist.pos - 6), h.z);
+    }
+  }
   function placeFollowCamera() {
-    const h = hookXZ();
-    focus.set(h.x + FOCUS_DX, Math.max(0, hoist.pos - 6), h.z);
+    setFocus();
     controls.target.copy(focus);
-    camera.position.copy(focus).add(CAM_OFF);
+    camera.position.copy(focus).add(quick ? CAM_OFF_Q : CAM_OFF);
   }
 
-  function enter() {
+  function enter(opt: { quick?: boolean } = {}) {
     if (active) return;
     active = true;
+    quick = !!opt.quick;
+    o.hud.classList.toggle('quick', quick);
     saved.min = controls.minDistance;
     saved.max = controls.maxDistance;
     saved.pan = controls.enablePan;
@@ -319,7 +573,7 @@ export function createOperate(o: OperateOptions) {
     controls.enablePan = false;
     controls.zoomToCursor = false;
     controls.autoRotate = false;
-    controls.minDistance = 12;
+    controls.minDistance = quick ? 5 : 12;
     controls.maxDistance = 180;
     controls.maxPolarAngle = Math.PI * 0.48;
     controls.enabled = true;
@@ -341,6 +595,14 @@ export function createOperate(o: OperateOptions) {
     held.clear();
     o.hud.hidden = true;
     marks.visible = false;
+    setFitHud(false);
+    quick = false;
+    o.hud.classList.remove('quick', 'idle');
+    pulse.visible = false;
+    camera.position.sub(shakeOff);
+    shakeOff.set(0, 0, 0);
+    shakeT = 0;
+    fly = null;
     rig.setSway(0, 0);
     controls.enabled = true;
     controls.enablePan = saved.pan;
@@ -396,11 +658,16 @@ export function createOperate(o: OperateOptions) {
       else wz = key * ax.sign;
     }
     let lift = (held.has('raise') ? 1 : 0) - (held.has('lower') ? 1 : 0);
+    if (phase === 'fit' && hand) {
+      updateFit(dt, wx, wz, lift);
+      return;
+    }
     // 감속 구간: 매단 블록이 받침 가까이 오면 내리는 속도를 저절로 줄인다(실제 권상 장치의 저속 구간을 대신)
     if (lift < 0 && hand && phase === 'hooked') {
       const hp = hookXZ();
       const gap = hoist.pos - hand.height - supportAt(hp.x, hp.z);
-      const cap = Math.max(FIT.softTouch * 0.6, Math.min(LIMIT.hoist, gap * 0.7));
+      // quick 모드는 덜 도와준다: F 를 누른 채 닿으면 0.8 m/s 로 충격 착지가 된다 → 받침 가까이에서는 끊어 눌러(촌동) 살살 내려야 한다
+      const cap = quick ? Math.max(0.8, Math.min(LIMIT.hoist, gap * 0.9)) : Math.max(FIT.softTouch * 0.6, Math.min(LIMIT.hoist, gap * 0.7));
       lift = -cap / LIMIT.hoist;
     }
 
@@ -409,12 +676,21 @@ export function createOperate(o: OperateOptions) {
     const az = drive(trol, wz, LIMIT.trolley, LIMIT.accel, dt, -o.trolleyZ, o.trolleyZ, LIMIT.brake);
     drive(hoist, lift, LIMIT.hoist, LIMIT.hoistAccel, dt, -Infinity, rig.hookTop);
     const L = Math.max(4, rig.trolleyY - hoist.pos);
-    swing(sway, ax, az, L, dt);
+    // quick 모드의 바람: 돌풍이 몰려왔다 잦아든다(잦아든 틈에 내리면 덜 어긋난다)
+    let gx = 0;
+    let gz = 0;
+    if (quick && phase === 'hooked') {
+      const w = o.wind?.() ?? 0;
+      const env = Math.max(0, Math.sin(clock * 0.45 + 1)) ** 2;
+      gx = w * env * Math.sin(clock * 0.9);
+      gz = w * env * Math.cos(clock * 0.7) * 0.8;
+    }
+    swing(sway, ax + gx, az + gz, L, dt);
 
     // 자석 맞춤: 이동 키를 놓은 채 목표 반경 안이면 크레인이 목표 쪽으로 천천히 다가간다
     if (hand && !wx && !wz && phase !== 'done') {
       const t = phase === 'approach' ? { x: hand.pickup.x, z: hand.pickup.z } : rectOf(hand.box);
-      const hp = hookXZ();
+      const hp = quick ? { x: travel.pos, z: trol.pos } : hookXZ();
       const dx = t.x - hp.x;
       const dz = t.z - hp.z;
       const d = Math.hypot(dx, dz);
@@ -445,13 +721,40 @@ export function createOperate(o: OperateOptions) {
         if (touchSpeed < 0 || prev.y - hand.height > support + 0.02) touchSpeed = Math.max(0, (prev.y - hoist.pos) / dt);
         hoist.pos = support + hand.height;
         hoist.vel = Math.max(0, hoist.vel);
+        if (!resting) {
+          // 처음 닿는 순간: 소리·고리·흔들림. 세게 닿으면 이음이 더 벌어진다(세팅에서 드러남)
+          resting = true;
+          restT = 0;
+          const tg = rectOf(hand.box);
+          landOff = Math.hypot(p.x - tg.x, p.z - tg.z);
+          const hard = touchSpeed > FIT.softTouch;
+          if (hard) hardHit = true;
+          o.onImpact?.(touchSpeed, hard);
+          pulseAt(p.x, support, p.z, hard ? 0xff5a3c : 0x7cf08a, hard ? 1.5 : 0.8);
+          if (hard) {
+            shake(1.1);
+            document.body.classList.add('op-impact');
+            window.setTimeout(() => document.body.classList.remove('op-impact'), 420);
+          } else if (touchSpeed > 0.2) shake(0.25);
+        }
         // 받침에 앉아 있으면 흔들림이 빨리 잦아든다
         const k = Math.exp(-dt * 3);
         sway.ax *= k;
         sway.az *= k;
         sway.wx *= k;
         sway.wz *= k;
-      } else if (bottom > support + 0.3) touchSpeed = -1;
+      } else {
+        if (bottom > support + 0.3) touchSpeed = -1;
+        if (bottom > support + 0.05) resting = false;
+      }
+      // quick 모드: 제자리 받침에 앉아 흔들림이 잦아들면 바로 세팅으로 넘어간다
+      if (quick && resting && phase === 'hooked') {
+        const tg = rectOf(hand.box);
+        // 받침 높이가 제자리 바닥과 꼭 같을 필요는 없다(측벽 블록은 경계 상자가 이중저와 겹쳐 이중저 윗면에 걸친다)
+        const seated = Math.hypot(p.x - tg.x, p.z - tg.z) <= FIT.offset && p.sway <= FIT.sway;
+        restT = seated ? restT + dt : 0;
+        if (restT > 0.35) beginFit();
+      }
       maxSway = Math.max(maxSway, hookXZ().sway);
     } else {
       // 빈 훅: 땅 1 m 위, 블록 위에서는 블록 윗면까지
@@ -507,19 +810,39 @@ export function createOperate(o: OperateOptions) {
               ? aligned
                 ? '3/3 천천히 내려 앉히기'
                 : '2/3 들어 올려 녹색 윤곽 위로'
-              : '받침에 닿음 — 맞으면 Space 로 내려놓기'
+              : aligned
+                ? '받침에 닿음 — 맞으면 Space 로 내려놓기'
+                : '2/3 R 로 들어 올려 녹색 윤곽 위로' // 건 직후(아직 트랜스포터 위)에는 내려놓기가 아니라 들어 올리기다
             : '안착 완료';
       actBtn.textContent = phase === 'approach' ? 'Space 걸기' : 'Space 내려놓기';
-      actBtn.hidden = phase === 'done';
+      actBtn.hidden = phase === 'done' || (quick && phase === 'hooked');
+      // quick 모드: 가용접한 뒤에는 조작판을 걷어 용접 불꽃이 보이게 한다(다음 할 일은 위 카드에)
+      o.hud.classList.toggle('idle', quick && phase === 'done');
+      if (quick && phase === 'hooked')
+        stepEl.textContent =
+          gap <= 0.05
+            ? aligned
+              ? '앉는 중…'
+              : '걸렸습니다 — R 로 들어 올려 다시 맞추기'
+            : !aligned
+              ? '녹색 윤곽 위로 옮기기'
+              : gap > 2.5
+                ? '내리기(F)'
+                : '살살 — F 를 끊어 눌러 앉히기';
+      else if (quick && phase === 'fit') stepEl.textContent = '이음 맞추기';
     }
     noteTime -= dt;
     const text = noteTime > 0 ? note : '';
     if (noteEl.textContent !== text) noteEl.textContent = text;
 
     // ── 카메라 ──
-    if (view === 'follow') {
-      focus.set(p.x + FOCUS_DX, Math.max(0, hoist.pos - 6), p.z);
+    if (quick && phase !== 'hooked') {
+      /* 세팅으로 넘어가는 프레임, 가용접한 뒤: 이음을 보던 자리에 머문다 */
+    } else if (view === 'follow') {
+      setFocus();
       const d = focus.clone().sub(controls.target);
+      // quick 모드는 조금 늦게 따라가 움직임이 느껴지게 한다
+      if (quick) d.multiplyScalar(1 - Math.exp(-dt * 7));
       controls.target.add(d);
       camera.position.add(d);
     } else {
@@ -527,6 +850,7 @@ export function createOperate(o: OperateOptions) {
       camera.position.copy(cabWorld);
       camera.lookAt(p.x, hoist.pos - 4, p.z);
     }
+    tickFx(dt);
   }
 
   /** 확인용(?operate 일 때 main.ts 가 window.__op 로 내놓음): 자동 시험이 훅을 몰 때 읽는 값 */
@@ -536,6 +860,8 @@ export function createOperate(o: OperateOptions) {
     const t = hand ? rectOf(hand.box) : null;
     return {
       phase,
+      quick,
+      fit: [fx.pos, fz.pos, fy.pos],
       clock,
       hook: { x: p.x, y: hoist.pos, z: p.z, sway: p.sway, vx: travel.vel, vz: trol.vel, vy: hoist.vel },
       pickup: hand ? { x: hand.pickup.x, y: hand.pickup.y, z: hand.pickup.z } : null,
@@ -551,6 +877,8 @@ export function createOperate(o: OperateOptions) {
     enter,
     exit,
     update,
+    /** quick 모드: 다음 블록을 건 채로 시작 */
+    nextBlock: () => next(),
     get active() {
       return active;
     },

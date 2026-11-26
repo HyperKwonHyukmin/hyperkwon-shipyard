@@ -12,6 +12,8 @@ interface Options {
   hud: HTMLElement;
   launch: ReturnType<typeof createLaunch>;
   onExit: () => void;
+  /** 예인이 끝난 순간의 결과(한 척 짓기가 받는다) */
+  onResult?: (r: { sec: number; vmaxKn: number; overSec: number }) => void;
   onHorn?: () => void;
   /** 시작 전 준비(선체를 다 쌓은 상태로) */
   prepare: () => void;
@@ -136,6 +138,7 @@ export function createLaunchTry(o: Options) {
     if (res && !shown) {
       shown = true;
       o.onHorn?.();
+      o.onResult?.(res);
       const pools = res.fillM3 / POOL_M3;
       resEl.innerHTML = `<h3>진수 완료</h3>
         <table>

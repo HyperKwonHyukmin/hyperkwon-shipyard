@@ -114,6 +114,7 @@ const KINDS = [plates, pipes, office, drums];
 const NO_GO: Box4[] = [
   [-112, 120, -40, 40], // 도크와 크레인 레일
   [-48, -12, 58, 102], // 인양 학습장
+  [10, 72, 66, 108], // 블록 세우기(turnover.ts)
   [-160, -118, -28, 28], // 트랜스포터 정류장(DOCK_STOP)
 ];
 

@@ -10,7 +10,9 @@
  */
 import * as THREE from 'three';
 
-export type TimeOfDay = 'day' | 'night';
+export type TimeOfDay = 'day' | 'dusk' | 'night';
+/** 낮 → 노을 → 밤 순서로 돈다 */
+const NEXT: Record<TimeOfDay, TimeOfDay> = { day: 'dusk', dusk: 'night', night: 'day' };
 const STORE_KEY = 'ulsan-story:time';
 
 function gradientTexture(stops: [number, string][]) {
@@ -52,6 +54,15 @@ export function createDayNight(o: Options) {
     [0.55, '#9cc2e3'],
     [0.8, '#cfe0ee'],
     [1, '#e4ebf0'],
+  ]);
+
+  // 노을(2026-11-22 오프닝 장면): 낮은 주황빛 해 + 켜지기 시작한 투광등. 하늘은 위 남색 → 수평선 주황
+  const duskBg = gradientTexture([
+    [0, '#27325e'],
+    [0.45, '#6a5a86'],
+    [0.72, '#d98a6a'],
+    [0.9, '#f3b46f'],
+    [1, '#f6cf9a'],
   ]);
 
   /** 창 불빛 그림(어두운 벽 + 밝은 창)을 낮용(밝은 회색 벽 + 어두운 유리창)으로 다시 그린다 */
@@ -97,38 +108,52 @@ export function createDayNight(o: Options) {
   });
 
   let mode: TimeOfDay = 'day';
-  function apply(t: TimeOfDay) {
+  /**
+   * 하늘빛 반사(환경 맵)를 끈 품질 단계에서는 그만큼 하늘빛(반구광)을 올려 준다.
+   * 2026-11-22: 반사를 끄면 낮 장면이 해 질 녘처럼 어둡고 누렇게 보였다(느린 PC 에서만 나타나 그동안 못 봄).
+   */
+  let noReflection = false;
+  const LOST: Record<TimeOfDay, number> = { day: 1.8, dusk: 1.45, night: 1.05 };
+  const HEMI: Record<TimeOfDay, number> = { day: 1.15, dusk: 0.75, night: 1.3 };
+  const hemiNow = () => HEMI[mode] * (noReflection ? LOST[mode] : 1);
+  /** save = false 면 브라우저에 남기지 않는다(오프닝 장면이 잠깐 노을로 바꿀 때) */
+  function apply(t: TimeOfDay, save = true) {
     mode = t;
     const day = t === 'day';
+    const dusk = t === 'dusk';
     const fog = o.scene.fog as THREE.FogExp2;
-    o.scene.background = day ? dayBg : night.bg;
+    o.scene.background = day ? dayBg : dusk ? duskBg : night.bg;
     // 2026-11-15 W5 디오라마풍: 낮 안개를 조금 짙게(먼 곳이 흐려져 깊이감), 하늘빛(반구광)을 줄이고 해를 따뜻하게·낮게·세게
     // → 그림자가 길고 진해져 형태가 또렷해진다. 하늘빛 2.0 은 그림자 쪽까지 밝혀 납작한 '장난감' 느낌의 주원인이었다
-    fog.color.setHex(day ? 0xc9d5e0 : night.fog);
-    fog.density = day ? 0.00115 : night.density;
-    o.renderer.toneMappingExposure = day ? 1.05 : night.exposure;
-    o.sea.color.setHex(day ? 0x2d5f86 : night.sea);
-    o.hemi.color.setHex(day ? 0xc9dbf0 : 0x5a6f9c);
-    o.hemi.groundColor.setHex(day ? 0x5a5247 : 0x1e1a16);
-    o.hemi.intensity = day ? 1.15 : 1.3;
-    o.moon.color.setHex(day ? 0xffe4c0 : 0x9fb4e0);
-    o.moon.intensity = day ? 3.4 : 0.9;
-    o.moon.position.set(day ? -300 : 300, day ? 260 : 400, day ? 230 : -200); // 낮 해 고도 약 35°
-    for (const e of emissive) e.m.emissiveIntensity = day ? e.base * 0.15 : e.base;
+    fog.color.setHex(day ? 0xc9d5e0 : dusk ? 0xcf9f8a : night.fog);
+    fog.density = day ? 0.00115 : dusk ? 0.0013 : night.density;
+    o.renderer.toneMappingExposure = day ? 1.05 : dusk ? 1.15 : night.exposure;
+    o.sea.color.setHex(day ? 0x2d5f86 : dusk ? 0x3a4f70 : night.sea);
+    o.hemi.color.setHex(day ? 0xc9dbf0 : dusk ? 0x8f9ad0 : 0x5a6f9c);
+    o.hemi.groundColor.setHex(day ? 0x5a5247 : dusk ? 0x4a3a30 : 0x1e1a16);
+    o.hemi.intensity = hemiNow();
+    o.moon.color.setHex(day ? 0xffe4c0 : dusk ? 0xff9450 : 0x9fb4e0);
+    o.moon.intensity = day ? 3.4 : dusk ? 2.7 : 0.9;
+    // 낮 해 고도 약 35°, 노을은 약 13°(그림자가 길게 눕는다)
+    if (dusk) o.moon.position.set(-420, 115, 260);
+    else o.moon.position.set(day ? -300 : 300, day ? 260 : 400, day ? 230 : -200);
+    for (const e of emissive) e.m.emissiveIntensity = day ? e.base * 0.15 : dusk ? e.base * 0.9 : e.base;
     // 낮에는 낮용 창 그림을 쓰고 발광은 끈다(밝은 벽이 빛나 보이지 않게)
     for (const w of windows) {
       w.m.map = day ? w.day : w.night;
       if (day) w.m.emissiveIntensity = 0;
     }
-    for (const x of lights) x.l.intensity = day ? x.base * x.day : x.base;
-    for (const n of o.nightOnly) n.visible = !day;
-    o.setFog(!day);
+    for (const x of lights) x.l.intensity = day ? x.base * x.day : dusk ? x.base * (x.day ? 0.8 : 0.6) : x.base;
+    // 별처럼 깜깜해야 어울리는 것(userData.deepNight)은 노을에 숨긴다
+    for (const n of o.nightOnly) n.visible = !day && !(dusk && n.userData.deepNight);
+    o.setFog(t === 'night');
     document.documentElement.dataset.time = t;
-    try {
-      localStorage.setItem(STORE_KEY, t);
-    } catch {
-      /* 저장이 막혀도 전환은 된다 */
-    }
+    if (save)
+      try {
+        localStorage.setItem(STORE_KEY, t);
+      } catch {
+        /* 저장이 막혀도 전환은 된다 */
+      }
   }
 
   // 처음 값: 주소 ?night / ?day 가 먼저, 그다음 지난번 선택, 없으면 낮
@@ -139,7 +164,16 @@ export function createDayNight(o: Options) {
   } catch {
     /* 무시 */
   }
-  apply(q.has('night') ? 'night' : q.has('day') ? 'day' : saved === 'night' ? 'night' : 'day');
+  apply(q.has('night') ? 'night' : q.has('dusk') ? 'dusk' : q.has('day') ? 'day' : saved === 'night' || saved === 'dusk' ? saved : 'day', false);
 
-  return { apply, toggle: () => apply(mode === 'day' ? 'night' : 'day'), get mode() { return mode; } };
+  return {
+    apply,
+    toggle: () => apply(NEXT[mode]),
+    /** 품질 단계가 하늘빛 반사를 껐는지 알려 준다(main.ts 의 applyQuality) */
+    setNoReflection(v: boolean) {
+      noReflection = v;
+      o.hemi.intensity = hemiNow();
+    },
+    get mode() { return mode; },
+  };
 }

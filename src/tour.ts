@@ -12,9 +12,28 @@ import type { Station } from './content/stations';
 import { ROADS, routeBetween } from './layout';
 
 const STORE_KEY = 'ulsan-story:visited';
+/** 설명 패널을 펼쳐 둘지(사용자가 고른 것). 없으면 접어 둔다 — 2026-11-22: 처음 온 사람에게 글이 화면의 28%를 덮었다 */
+const PANEL_KEY = 'ulsan-story:panel';
+/** 설명 깊이(1 처음, 2 현장, 3 깊이). 사용자가 고른 것, 없으면 1 */
+const LEVEL_KEY = 'ulsan-story:level';
 const FLY_SEC = 2;
 
+/** 직접 해 볼 수 있는 것 하나: 지도에 노란 마름모로 찍히고, 지도에서 바로 시작한다 */
+export interface Experience {
+  label: string;
+  /** 무엇을 하는지 한 줄 */
+  hint?: string;
+  /** 어느 장소의 것인가(장소 id) */
+  station: string;
+  /** 지도 위 자리(월드 x, z) */
+  at: [number, number];
+  run: () => void;
+}
+const LETTERS = 'ABCDEFGHIJKLMNOP';
+
 interface TourOptions {
+  /** 직접 해 볼 수 있는 것들(지도 표시와 단계 바의 노란 점) */
+  experiences?: Experience[];
   camera: THREE.PerspectiveCamera;
   controls: OrbitControls;
   stations: Station[];
@@ -62,8 +81,52 @@ export function createTour(opt: TourOptions) {
     toggle.textContent = c ? '펼치기' : '접기';
     toggle.setAttribute('aria-expanded', String(!c));
   }
-  toggle.addEventListener('click', () => setCollapsed(!panel.classList.contains('collapsed')));
-  if (matchMedia('(max-width: 700px)').matches) setCollapsed(true);
+  toggle.addEventListener('click', () => {
+    const c = !panel.classList.contains('collapsed');
+    setCollapsed(c);
+    try {
+      localStorage.setItem(PANEL_KEY, c ? 'closed' : 'open');
+    } catch {
+      /* 저장이 막혀도 그대로 */
+    }
+  });
+  // ── 설명 깊이(2026-11-22): 처음 보는 사람은 요약과 비유만, 현장 사람은 현장 포인트와 앞뒤 공정, 경력자는 깊이 보기까지 ──
+  const lvEl = $('p-level');
+  function setLevel(n: number, save = true) {
+    panel.dataset.lv = String(n);
+    lvEl.querySelectorAll<HTMLButtonElement>('button').forEach((b) => b.setAttribute('aria-pressed', String(Number(b.dataset.lv) === n)));
+    if (save)
+      try {
+        localStorage.setItem(LEVEL_KEY, String(n));
+      } catch {
+        /* 저장이 막혀도 그대로 */
+      }
+  }
+  lvEl.addEventListener('click', (e) => {
+    const b = (e.target as Element).closest<HTMLButtonElement>('button[data-lv]');
+    if (b) setLevel(Number(b.dataset.lv));
+  });
+  {
+    let lv = 1;
+    try {
+      const v = Number(localStorage.getItem(LEVEL_KEY));
+      if (v === 2 || v === 3) lv = v;
+    } catch {
+      /* 무시 */
+    }
+    setLevel(lv, false);
+  }
+  /** 사용자가 고른 대로(없으면 접힘, 휴대폰은 늘 접힘). 접힌 패널에는 한 줄 요약만 보인다 */
+  function restore() {
+    let open = false;
+    try {
+      open = localStorage.getItem(PANEL_KEY) === 'open';
+    } catch {
+      /* 무시 */
+    }
+    setCollapsed(!open || matchMedia('(max-width: 700px)').matches);
+  }
+  restore();
 
   // ── 패널 내용 ──
   function render(i: number) {
@@ -72,6 +135,8 @@ export function createTour(opt: TourOptions) {
     $('p-name').textContent = s.name;
     $('p-proc').textContent = s.processes.length ? `공정 ${s.processes.join(' · ')}` : '공정 전 · 이야기의 시작';
     $('p-summary').textContent = s.summary;
+    // 접힌 패널의 한 줄: 빠른 견학 문장, 없으면 설명의 첫 문장
+    $('p-quick').textContent = s.quick ?? s.summary.split(/(?<=[.다]\.?)\s/)[0];
     const easy = $('p-easy');
     easy.hidden = !s.easy;
     easy.innerHTML = s.easy ? `<b>쉽게 말하면</b> ${esc(s.easy)}` : '';
@@ -88,6 +153,17 @@ export function createTour(opt: TourOptions) {
           .join('') +
         '</ul>'
       : '';
+    // '머리: 내용' 이면 머리를 굵게
+    const li = (t: string) => {
+      const k = t.indexOf(': ');
+      return k > 0 && k < 24 ? `<li><b>${esc(t.slice(0, k))}</b> ${esc(t.slice(k + 2))}</li>` : `<li>${esc(t)}</li>`;
+    };
+    const linkEl = $('p-link');
+    linkEl.hidden = !s.link;
+    linkEl.innerHTML = s.link ? `<h3>앞뒤 공정과의 연결</h3><p>${esc(s.link)}</p>` : '';
+    const deepEl = $('p-deep');
+    deepEl.hidden = !s.deep?.length;
+    deepEl.innerHTML = s.deep?.length ? `<h3>깊이 보기</h3><ul>${s.deep.map(li).join('')}</ul>` : '';
     const facts = $('p-facts');
     facts.innerHTML = s.facts
       .map(
@@ -127,12 +203,14 @@ export function createTour(opt: TourOptions) {
 
   // ── 단계 바: 공정 순서대로 칩. 지금 단계는 초록, 가 본 단계는 번호가 초록 ──
   const stepsEl = $('steps');
+  /** 그 장소에 직접 해 볼 것이 있는가(칩에 노란 점) */
+  const hasEx = (id: string) => !!opt.experiences?.some((e) => e.station === id);
   function drawSteps(i: number) {
     stepsEl.innerHTML = stations
       .map(
         (s, j) =>
-          `<button type="button" data-i="${j}" class="${j === i ? 'now' : visited.has(s.id) ? 'seen' : ''}"` +
-          ` title="${j}. ${esc(s.name)}" aria-label="${j}. ${esc(s.name)}"${j === i ? ' aria-current="step"' : ''}>` +
+          `<button type="button" data-i="${j}" class="${j === i ? 'now' : visited.has(s.id) ? 'seen' : ''}${hasEx(s.id) ? ' ex' : ''}"` +
+          ` title="${j}. ${esc(s.name)}${hasEx(s.id) ? ' — 직접 해 볼 것이 있습니다' : ''}" aria-label="${j}. ${esc(s.name)}${hasEx(s.id) ? ', 직접 해 볼 것 있음' : ''}"${j === i ? ' aria-current="step"' : ''}>` +
           `<i>${j}</i>${esc(s.short ?? s.name)}</button>`,
       )
       .join('');
@@ -175,7 +253,25 @@ export function createTour(opt: TourOptions) {
       const cls = i === current ? 'm-st now' : visited.has(s.id) ? 'm-st seen' : 'm-st';
       html += `<g class="${cls}" data-i="${i}" role="button" tabindex="0" aria-label="${i}. ${esc(s.name)}"><circle cx="${x}" cy="${z}" r="26"/><text x="${x}" y="${z + 1}">${i}</text></g>`;
     });
+    // 직접 해 볼 수 있는 것: 노란 마름모(A, B, …). 지도 아래 목록과 같은 글자
+    (opt.experiences ?? []).forEach((ex, k) => {
+      const [x, z] = ex.at;
+      html += `<g class="m-ex" data-ex="${k}" role="button" tabindex="0" aria-label="해 볼 것: ${esc(ex.label)}"><path d="M${x} ${z - 24}L${x + 24} ${z}L${x} ${z + 24}L${x - 24} ${z}z"/><text x="${x}" y="${z + 1}">${LETTERS[k] ?? '?'}</text></g>`;
+    });
     svg.innerHTML = html;
+    const exEl = $('map-ex');
+    exEl.hidden = !opt.experiences?.length;
+    exEl.innerHTML = opt.experiences?.length
+      ? '<h3>직접 해 볼 수 있는 것<small>지도의 노란 마름모 · 누르면 바로 시작합니다</small></h3><ul>' +
+        opt.experiences
+          .map((ex, k) => {
+            const j = stations.findIndex((s) => s.id === ex.station);
+            const where = j >= 0 ? `${j}. ${esc(stations[j].short ?? stations[j].name)}` : '';
+            return `<li><button type="button" data-ex="${k}"><b>${LETTERS[k] ?? '?'}</b>${esc(ex.label)}<span>${where}${ex.hint ? ` · ${esc(ex.hint)}` : ''}</span></button></li>`;
+          })
+          .join('') +
+        '</ul>'
+      : '';
     $('map-list').innerHTML = stations
       .map(
         (s, i) =>
@@ -189,7 +285,16 @@ export function createTour(opt: TourOptions) {
   }
   $('map-btn').addEventListener('click', () => openMap(mapEl.hidden));
   $('map-close').addEventListener('click', () => openMap(false));
+  /** 지도에서 고른 체험을 시작한다(지도는 닫는다) */
+  function runExperience(k: number) {
+    const ex = opt.experiences?.[k];
+    if (!ex) return;
+    openMap(false);
+    ex.run();
+  }
   mapEl.addEventListener('click', (e) => {
+    const x = (e.target as Element).closest('[data-ex]');
+    if (x) return runExperience(Number(x.getAttribute('data-ex')));
     const t = (e.target as Element).closest('[data-i]');
     if (t) {
       go(Number(t.getAttribute('data-i')));
@@ -197,6 +302,12 @@ export function createTour(opt: TourOptions) {
     } else if (e.target === mapEl) openMap(false);
   });
   mapEl.addEventListener('keydown', (e) => {
+    const x = (e.target as Element).closest('g[data-ex]');
+    if (x && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault();
+      runExperience(Number(x.getAttribute('data-ex')));
+      return;
+    }
     const t = (e.target as Element).closest('g[data-i]');
     if (t && (e.key === 'Enter' || e.key === ' ')) {
       e.preventDefault();
@@ -305,5 +416,5 @@ export function createTour(opt: TourOptions) {
     fly = null;
     controls.enabled = true;
   };
-  return { go, select, flyTo, stop, update, setCollapsed, get current() { return current; } };
+  return { go, select, flyTo, stop, update, setCollapsed, restore, get current() { return current; } };
 }

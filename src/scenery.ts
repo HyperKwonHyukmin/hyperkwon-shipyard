@@ -100,9 +100,9 @@ export function createScenery(scene: THREE.Scene, renderer: THREE.WebGLRenderer,
 
   // ── 먼 산 3겹 ──
   const RIDGES = [
-    { r: 1250, base: 40, amp: 150, day: 0x58735f, night: 0x0a1016 },
-    { r: 1650, base: 70, amp: 230, day: 0x7d968f, night: 0x0c131b },
-    { r: 2150, base: 110, amp: 320, day: 0xa3b7bd, night: 0x0e1620 },
+    { r: 1250, base: 40, amp: 150, day: 0x58735f, dusk: 0x3b3a4e, night: 0x0a1016 },
+    { r: 1650, base: 70, amp: 230, day: 0x7d968f, dusk: 0x6b5a72, night: 0x0c131b },
+    { r: 2150, base: 110, amp: 320, day: 0xa3b7bd, dusk: 0xa98490, night: 0x0e1620 },
   ];
   const ridges = RIDGES.map((r, i) => {
     const m = new THREE.MeshBasicMaterial({ color: r.day, side: THREE.DoubleSide, fog: false });
@@ -183,15 +183,16 @@ export function createScenery(scene: THREE.Scene, renderer: THREE.WebGLRenderer,
     scene.add(crown, trunk);
   }
 
-  /** 낮/밤에 맞춰 하늘빛 반사 세기, 산 색, 구름을 바꾼다 */
-  function setDay(day: boolean) {
-    scene.environmentIntensity = day ? 0.55 : 0.05;
-    for (const r of ridges) r.m.color.setHex(day ? r.day : r.night);
-    clouds.visible = day;
+  /** 낮/노을/밤에 맞춰 하늘빛 반사 세기, 산 색, 구름을 바꾼다 */
+  function setTime(t: 'day' | 'dusk' | 'night') {
+    scene.environmentIntensity = t === 'day' ? 0.55 : t === 'dusk' ? 0.3 : 0.05;
+    for (const r of ridges) r.m.color.setHex(r[t]);
+    clouds.visible = t !== 'night';
+    for (const c of clouds.children) (c as THREE.Sprite).material.color.setHex(t === 'dusk' ? 0xffb89a : 0xffffff);
   }
   /** 하늘빛 반사 켜고 끄기(품질 단계 3 이상에서 끔 — 픽셀마다 환경 맵을 읽는 비용) */
   const setReflection = (on: boolean) => {
     scene.environment = on ? env : null;
   };
-  return { setDay, setReflection, obstacles };
+  return { setTime, setReflection, obstacles };
 }

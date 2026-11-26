@@ -5,14 +5,14 @@
  */
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { buildBulkCarrier } from './ship';
+import { buildBulkCarrier, SHIP } from './ship';
 import { createErection } from './erection';
 import { createWelding } from './welding';
 import { createFog, lightBeam } from './atmosphere';
 import { createSound, nearness } from './sound';
 import { STATIONS } from './content/stations';
 import { buildYard } from './yard';
-import { createTour } from './tour';
+import { createTour, type Experience } from './tour';
 import { createCutting } from './factory/cutting';
 import { createAssembly } from './factory/assembly';
 import { createPE } from './factory/pe';
@@ -40,6 +40,16 @@ import { createCrowd } from './crowd';
 import { createNet, HELMETS, nameOf, randomName, type Helmet } from './net';
 import { createPeers } from './peers';
 import { createDockWork } from './dockwork';
+import { createOpening } from './opening';
+import { createBackdrop } from './backdrop';
+import { createForces } from './forces';
+import { createMiniMap } from './minimap';
+import { createPhoto } from './photo';
+import { createTurnover } from './turnover';
+import { createBuild } from './build';
+import { createTries } from './try-frame';
+import { yardTries } from './tries-yard';
+import { seaTries } from './tries-sea';
 import { concreteTexture, shedWallTextures } from './textures';
 
 const DOCK = { length: 220, width: 48, depth: 14, gate: 8 };
@@ -229,6 +239,17 @@ gate.add(
   box(DOCK.gate, DOCK.depth + 1, DOCK.width + 4, mat.gate, HALF_L + DOCK.gate / 2, -DOCK.depth / 2 + 0.5, 0),
   box(DOCK.gate + 0.4, 0.4, DOCK.width + 4.4, mat.safety, HALF_L + DOCK.gate / 2, 1.2, 0),
 );
+// 게이트 손질(2026-11-22: 매끈한 갈색 상자였다): 양면의 세로 보강재, 가로 보강 띠, 위 통로 난간
+{
+  const gx = HALF_L + DOCK.gate / 2;
+  const gw = DOCK.width + 4;
+  for (const face of [-1, 1]) {
+    for (let z = -gw / 2 + 2; z <= gw / 2 - 2; z += 4) gate.add(box(0.35, DOCK.depth + 0.6, 0.5, mat.steel, gx + face * (DOCK.gate / 2 + 0.17), -DOCK.depth / 2 + 0.5, z));
+    for (const y of [-10, -5.5, -1]) gate.add(box(0.25, 0.5, gw, mat.steel, gx + face * (DOCK.gate / 2 + 0.12), y, 0));
+    gate.add(box(0.08, 0.08, gw, mat.safety, gx + face * (DOCK.gate / 2 - 0.3), 2.5, 0, false));
+    for (let z = -gw / 2 + 1; z <= gw / 2 - 1; z += 3) gate.add(box(0.08, 1.1, 0.08, mat.safety, gx + face * (DOCK.gate / 2 - 0.3), 1.95, z, false));
+  }
+}
 
 // 도크 가장자리 안전 난간(노란 띠)과 바다 쪽 계선주
 for (const side of [-1, 1]) box(DOCK.length, 0.5, 0.3, mat.safety, 0, 0.6, side * (HALF_W + 0.4), false);
@@ -263,6 +284,7 @@ for (const side of [-1, 1]) box(DOCK.length + 40, 0.3, 0.5, mat.steel, -20, 0.15
 
 // ── 골리앗 크레인 ─────────────────────────────────────────
 const CRANE_H = 68;
+const cabPosition = new THREE.Vector3(-6, CRANE_H - 2, -CRANE_RAIL_Z + 4);
 const crane = new THREE.Group();
 crane.position.x = -30;
 scene.add(crane);
@@ -302,7 +324,7 @@ scene.add(crane);
   }
   // 운전실
   const cab = new THREE.Mesh(new THREE.BoxGeometry(3.4, 3, 3.4), mat.craneDark);
-  cab.position.set(-6, CRANE_H - 2, -CRANE_RAIL_Z + 4);
+  cab.position.copy(cabPosition);
   crane.add(cab);
   const cabWin = new THREE.Mesh(new THREE.PlaneGeometry(2.8, 1.4), mat.lamp);
   cabWin.position.set(-7.75, CRANE_H - 1.6, -CRANE_RAIL_Z + 4);
@@ -483,9 +505,12 @@ const firstHash = location.hash;
 const startPlaced = (() => {
   const n = Number(params.get('blocks'));
   if (Number.isInteger(n) && n >= 0 && n <= blocks.length && params.has('blocks')) return n;
-  return still ? blocks.length : 0;
+  // 처음 보는 도크가 비어 있지 않게, 반쯤 올라간 선체에서 시작한다(2026-11-22: 빈 도크가 첫인상이었다)
+  return still ? blocks.length : 13; // 오프닝 장면이 맞추는 수와 같게(12 로 시작하는 진입과 13 으로 시작하는 진입이 섞여 숫자가 오가 보였다)
 })();
 const hudStatus = document.getElementById('hud-status');
+/** 크레인을 직접 운전하는 중인가(상태줄 문구용) */
+let operating = false;
 const welding = createWelding(scene);
 const fog = createFog(scene);
 const sound = createSound();
@@ -507,7 +532,8 @@ const erection = createErection(
     placed: startPlaced,
     holdAtEnd: true,
     onStatus: (text, placed) => {
-      if (hudStatus) hudStatus.textContent = `도크: ${text}`;
+      // 직접 운전 중에는 자동 탑재 문구가 아니라 지금 직접 올리는 블록임을 밝힌다
+      if (hudStatus) hudStatus.textContent = `도크: ${operating ? '직접 운전 · ' : ''}${text}`;
       // 도크 장소의 건조 시점 막대를 따라 움직인다(사용자가 끄는 중이면 건드리지 않음)
       const tl = document.getElementById('tl') as HTMLInputElement | null;
       if (tl && document.activeElement !== tl) {
@@ -527,7 +553,10 @@ const speedBtn = document.getElementById('speed');
 speedBtn?.addEventListener('click', () => setSpeed(speed >= 16 ? 1 : speed * 4));
 function setSpeed(n: number) {
   speed = n;
-  if (speedBtn) speedBtn.textContent = `×${n}`;
+  if (speedBtn) {
+    speedBtn.textContent = `장면 속도 ×${n}`;
+    speedBtn.title = '공정 장면(탑재·공장·진수)이 진행되는 빠르기입니다. 빠른 견학 중에는 장소마다 저절로 바뀝니다.';
+  }
 }
 if (still && speedBtn) speedBtn.hidden = true;
 // ── 조선소 배치와 장소 둘러보기(P1) ─────────────────────────
@@ -565,6 +594,150 @@ const launch = createLaunch({
   restart: () => erection.setPlaced(0),
 });
 factories.launch = { update: () => {}, status: launch.status };
+// ── 힘 보기(2026-11-22): 받침 반력 막대, 훅 하중, 진수 때 부력 몫(forces.ts) ──
+const forceBtn = document.getElementById('force');
+const forces = createForces({
+  scene,
+  camera,
+  keelX: (() => {
+    const xs: number[] = [];
+    for (let x = -HALF_L + 18; x <= HALF_L - 18; x += 4) xs.push(x);
+    return xs;
+  })(),
+  // 막대는 도크 옆 안벽 위(도크 가장자리와 크레인 레일 사이)에 세운다. 도크 안 통로에 두면 벽과 선체에 가려 안 보인다
+  aisleZ: HALF_W + 3.6,
+  floorY: 0.1,
+  boxes: erection.boxes(),
+  names: blocks.map((b) => b.name),
+  placed: () => erection.placed(),
+  hooked: () => (operate?.active ? -1 : erection.hooked()),
+  hookPoint: (out) => out.set(crane.position.x, getHookPoint(), trolley.position.z),
+  level: () => launch.level,
+  keelY: -DOCK.depth + 1.8,
+  draft: 7,
+  hud: document.getElementById('force-hud')!,
+  tag: document.getElementById('force-tag')!,
+});
+function setForces(v: boolean) {
+  forces.setOn(v);
+  forceBtn?.setAttribute('aria-pressed', String(v));
+  document.body.classList.toggle('forces', v);
+  document.querySelector('#acts [data-act="force"]')?.setAttribute('aria-pressed', String(v));
+  // 다른 장소에서 켜면 힘이 보이는 도크로 간다
+  if (v && !['dock', 'launch'].includes(STATIONS[tour.current]?.id ?? '')) tour.go(DOCK_INDEX);
+}
+forceBtn?.addEventListener('click', () => setForces(!forces.on));
+let dockFloorViewActive = false;
+
+/** 3번 화물창 안으로 들어가 본다. 측벽이 아직이면 측벽까지 쌓은 상태로 옮긴다 */
+function holdView() {
+  dockFloorViewActive = false;
+  const need = blocks.findIndex((b) => b.id === 'H3-P') + 1; // 3번 화물창 양쪽 측벽까지
+  if (erection.placed() < need || launch.active) {
+    launch.abort();
+    erection.setPlaced(Math.max(need, 12));
+  }
+  tour.flyTo([-4, 5, -11], [9, -5, 14]);
+  if (actsEl) {
+    actsEl.innerHTML =
+      '<p class="hold-cap"><b>3번 화물창 안</b> 옆 벽의 세로 뼈대가 측벽 늑골, 아래 비스듬한 판이 호퍼 탱크, 위 비스듬한 판이 톱사이드 탱크입니다.</p><button class="btn primary" type="button" id="hold-out">화물창에서 나가기</button>';
+    actsEl.querySelector('#hold-out')!.addEventListener('click', () => {
+      drawActs('dock');
+      tour.go(DOCK_INDEX);
+    });
+  }
+}
+
+function gantryView() {
+  dockFloorViewActive = false;
+  const direction = crane.position.x <= 0 ? 1 : -1;
+  // 거더 중심(±2.6m) 위에서 트롤리 상단(+9m)을 넘고, 거더 바깥으로 내려다본다.
+  tour.flyTo([crane.position.x + direction * 2.6, CRANE_H + 12, -15], [direction * 55, -4, 0]);
+}
+
+function dockCabView() {
+  if (operate.active) return;
+  dockFloorViewActive = false;
+  const eye = crane.localToWorld(cabPosition.clone());
+  // 운전실 안쪽 벽(중심 +1.7m) 너머, 거더 하단(y=68m) 아래에서 도크 내 훅과 선체 사이를 본다.
+  eye.z += 2.2;
+  const load = hook.getWorldPosition(new THREE.Vector3());
+  const hullX = THREE.MathUtils.clamp(load.x, SHIP.aftEnd + 20, SHIP.foreEnd - 20);
+  const look = new THREE.Vector3(hullX, ship.position.y + SHIP.split, 0);
+  if (erection.hooked() >= 0 && Math.abs(load.x) <= HALF_L && Math.abs(load.z) < HALF_W) {
+    load.y -= HOOK_DROP / 2;
+    const hullSight = look.clone().sub(eye);
+    const distance = hullSight.length();
+    const sight = load.sub(eye).normalize().add(hullSight.normalize());
+    look.copy(eye).addScaledVector(sight, distance / 2);
+  }
+  tour.flyTo([eye.x, eye.y, eye.z], [look.x, look.y, look.z]);
+}
+
+function dockFloorView() {
+  if (launch.active || launch.level > -DOCK.depth) launch.abort();
+  dockFloorViewActive = true;
+  // 반폭 16m 외판과 반폭 24m 도크 벽 사이에서 바닥 +1.7m에 서서 반지름 3m 빌지의 45° 꼭짓점을 비스듬히 본다.
+  const halfBeam = SHIP.beam / 2;
+  const bilgeOffset = 3 * Math.SQRT1_2;
+  tour.flyTo(
+    [-26, -DOCK.depth + 1.7, (halfBeam + HALF_W) / 2],
+    [-12, ship.position.y + 3 - bilgeOffset, halfBeam - 3 + bilgeOffset],
+  );
+}
+// ── 장소별 '해 볼 것' 단추(2026-11-22): 설명 패널을 접어 두므로 직접 해 보는 것은 화면 아래에 꺼내 둔다 ──
+const ACTS: Record<string, { label: string; act: string; primary?: boolean; run: () => void }[]> = {
+  dock: [
+    { label: '크레인 운전해 보기', act: 'operate', primary: true, run: () => startOperate() },
+    { label: '블록 세우기', act: 'turn', run: () => startTurn() },
+    { label: '힘 보기', act: 'force', run: () => setForces(!forces.on) },
+    { label: '화물창 안으로', act: 'hold', run: () => holdView() },
+    { label: '골리앗 위에서', act: 'gantry-view', run: gantryView },
+    { label: '운전실에서', act: 'cab-view', run: dockCabView },
+    { label: '도크 바닥에서', act: 'dock-floor-view', run: dockFloorView },
+  ],
+  launch: [
+    { label: '직접 진수해 보기', act: 'launchtry', primary: true, run: () => startLaunchTry() },
+    { label: '자동 진수 바로 보기', act: 'launchnow', run: () => { launch.abort(); erection.setPlaced(blocks.length); } },
+    { label: '힘 보기', act: 'force', run: () => setForces(!forces.on) },
+  ],
+  design: [{ label: '선체 굽힘 체험 열기', act: 'panel', primary: true, run: () => showExtra() }],
+  gate: [{ label: '연혁과 모형 시점 보기', act: 'panel', run: () => showExtra() }],
+};
+/** 설명 패널을 펼치고 그 장소의 체험 칸으로 내려간다(이미 펼쳐져 있으면 누른 표시가 나게 잠깐 강조) */
+function showExtra() {
+  tour.setCollapsed(false);
+  const el = document.getElementById('p-extra');
+  if (!el) return;
+  el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  el.classList.remove('flash');
+  void el.offsetWidth;
+  el.classList.add('flash');
+}
+/** 화면 가운데 잠깐 뜨는 알림 */
+let noticeTimer = 0;
+function notice(text: string, sec = 4.5) {
+  let el = document.getElementById('notice');
+  if (!el) {
+    el = document.body.appendChild(Object.assign(document.createElement('div'), { id: 'notice', className: 'tp-toast' }));
+    el.setAttribute('role', 'status');
+    el.style.whiteSpace = 'normal';
+    el.style.textAlign = 'center';
+  }
+  el.textContent = text;
+  el.classList.remove('out');
+  window.clearTimeout(noticeTimer);
+  noticeTimer = window.setTimeout(() => el!.classList.add('out'), sec * 1000);
+}
+const actsEl = document.getElementById('acts');
+function drawActs(id: string) {
+  if (!actsEl) return;
+  const list = ACTS[id] ?? [];
+  actsEl.innerHTML = list
+    .map((a, i) => `<button class="btn${a.primary ? ' primary' : ''}" type="button" data-i="${i}" data-act="${a.act}"${a.act === 'force' ? ` aria-pressed="${forces.on}"` : ''}>${a.label}</button>`)
+    .join('');
+  actsEl.querySelectorAll<HTMLButtonElement>('button').forEach((b) => b.addEventListener('click', () => list[Number(b.dataset.i)].run()));
+}
 // ── 의장 안벽(P3-2): 진수한 배가 안벽에서 후행의장을 마치고 시운전 해역으로 ──
 factories.quay = createQuay(scene, stationAt('quay'), { seaY: SEA_Y, draft: 7 });
 // ── 시운전(P3-3): 속력, 선회, 지그재그, 긴급 정지 ──
@@ -579,6 +752,21 @@ const designExp = createDesign(scene, [stationAt('design')[0], 0, 33]);
 factories.design = designExp;
 // ── 블록 인양 학습(P4-3): 도크 옆 빈 땅의 문형 크레인 ──
 const liftLab = createLift(scene, [-30, 0, 80]);
+// ── 블록 세우기(2026-11-22): 도크 옆 문형 크레인의 훅 두 개가 블록을 세우며 하중이 옮겨 가는 것을 보여 준다 ──
+const turnover = createTurnover(scene, [42, 0, 88], document.getElementById('turn-hud')!, {
+  onClose: () => {
+    document.body.classList.remove('turning');
+    tour.go(DOCK_INDEX);
+  },
+});
+function startTurn() {
+  quick.stop();
+  setWalk(false);
+  tour.select(DOCK_INDEX);
+  tour.flyTo(turnover.view.cam, turnover.view.look);
+  document.body.classList.add('turning');
+  turnover.open();
+}
 /** 지금 보는 장소만 움직인다(다른 장소는 멈춰 있다가 돌아오면 이어서). 2026-11-13 사용자: "모든 곳이 계속 움직이는 건 낭비" */
 function updateFactories(id: string, machineDt: number, dt: number) {
   factories[id]?.update(machineDt, dt);
@@ -595,7 +783,66 @@ function updateTimelineLabel(n: number) {
 }
 // 걷기 모드(아래에서 만든다. 둘러보기가 먼저 만들어져야 해서 변수만 먼저)
 let walk: ReturnType<typeof createWalk> | null = null;
+// ── 도크 밖 장소의 직접 해 보기(2026-11-22): 선상가열·용접 순서·블록 수평·스프레이 도장·경사 시험·조타·명명식 ──
+// 장면을 만들므로 낮/밤 전환(createDayNight)보다 먼저 만든다
+const tries = createTries({
+  scene,
+  camera,
+  controls,
+  el: document.getElementById('try-hud')!,
+  defs: [...yardTries(stationAt), ...seaTries(stationAt)],
+  sound: { thump: (v) => sound.thump(v), horn: () => sound.horn() },
+  seaY: SEA_Y,
+  cut: (fn) => cut(fn),
+  onEnter: (d) => {
+    quick.stop();
+    setWalk(false);
+    tour.select(STATIONS.findIndex((s) => s.id === d.station));
+    tour.stop();
+    document.body.classList.add('operating', 'trying');
+    yard.showLabels(false);
+  },
+  onExit: (d) => {
+    document.body.classList.remove('operating', 'trying');
+    yard.showLabels(true);
+    tour.go(STATIONS.findIndex((s) => s.id === d.station));
+  },
+});
+for (const d of tries.defs) (ACTS[d.station] ??= []).unshift({ label: d.label, act: 'try', primary: true, run: () => tries.start(d.id) });
+/**
+ * 직접 해 볼 수 있는 것과 그 자리(2026-11-22 사용자: "지금 어떤 체험이 가능한지 판단이 안 된다").
+ * 지도에 노란 마름모(A, B, …)로 찍히고 지도 아래 목록에서 바로 시작한다. 걷기의 작은 지도와 단계 바 칩에도 표시된다.
+ * 체험을 더하면 여기에 한 줄: 장소 id, 지도 위 자리 [x, z](다른 표시와 50 m 쯤 띄운다), 시작 함수.
+ */
+const EXPERIENCES: Experience[] = [
+  { label: '한 척 짓기', hint: '블록을 올리고 이음을 맞춰 배 짓기', station: 'dock', at: [-62, 0], run: () => build.offer() },
+  { label: '크레인 운전', hint: '적치장에서 블록을 걸어 직접 탑재', station: 'dock', at: [-140, -36], run: () => startOperate() },
+  { label: '블록 세우기', hint: '훅 두 개의 하중이 옮겨 가는 것', station: 'dock', at: [42, 88], run: () => startTurn() },
+  {
+    label: '블록 인양 학습',
+    hint: '와이어 각도와 장력',
+    station: 'dock',
+    at: [-30, 80],
+    run: () => {
+      visit('dock');
+      window.setTimeout(() => tour.flyTo(liftLab.view.cam, liftLab.view.look), 1800);
+    },
+  },
+  { label: '힘 보기', hint: '받침 반력·훅 하중·선체 굽힘', station: 'dock', at: [62, -42], run: () => setForces(true) },
+  { label: '직접 진수', hint: '물 채우기·게이트·예인', station: 'launch', at: [168, 0], run: () => startLaunchTry() },
+  { label: '선체 굽힘 체험', hint: '파도와 화물에 따른 응력', station: 'design', at: [-588, 34], run: () => visit('design') },
+  { label: '역사관 모형', hint: '1972 → 1974 → 지금', station: 'gate', at: [-588, -56], run: () => visit('gate') },
+  ...tries.experiences,
+];
+/** 그 장소로 가서 설명 패널의 체험 칸을 연다 */
+function visit(id: string) {
+  quick.stop();
+  setWalk(false);
+  tour.go(STATIONS.findIndex((s) => s.id === id));
+  showExtra();
+}
 const tour = createTour({
+  experiences: EXPERIENCES,
   camera,
   controls,
   stations: STATIONS,
@@ -609,6 +856,8 @@ const tour = createTour({
     return true;
   },
   renderExtra: (s, el) => {
+    dockFloorViewActive = false;
+    drawActs(s.id);
     if (factories[s.id]) {
       el.innerHTML = '<p class="live"><span>지금</span> <output id="live"></output></p>';
       if (s.id === 'gate') {
@@ -659,14 +908,7 @@ const tour = createTour({
       `<div class="op-entry"><h3>선체 안 들여다보기</h3><p>3번 화물창 안으로 들어가 측벽 늑골, 아래 호퍼 경사판, 위 톱사이드 탱크를 봅니다. 측벽이 아직이면 측벽까지 쌓은 상태로 옮깁니다.</p>
       <button class="btn" id="hold-view" type="button">화물창 안으로</button></div>`,
     );
-    el.querySelector('#hold-view')!.addEventListener('click', () => {
-      const need = blocks.findIndex((b) => b.id === 'H3-P') + 1; // 3번 화물창 양쪽 측벽까지
-      if (erection.placed() < need || launch.active) {
-        launch.abort();
-        erection.setPlaced(Math.max(need, 12));
-      }
-      tour.flyTo([-4, 5, -11], [9, -5, 14]);
-    });
+    el.querySelector('#hold-view')!.addEventListener('click', () => holdView());
     liftLab.renderPanel(el, () => tour.flyTo(liftLab.view.cam, liftLab.view.look));
     tl.addEventListener('input', () => updateTimelineLabel(Number(tl.value)));
     tl.addEventListener('change', () => {
@@ -802,6 +1044,7 @@ for (const [x, z, l, h, w] of sheds) {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   const stars = new THREE.Points(g, new THREE.PointsMaterial({ color: 0xdde6ff, size: 1.6, sizeAttenuation: false, fog: false, transparent: true, opacity: 0.8 }));
+  stars.userData.deepNight = true; // 노을에는 숨김(daynight.ts)
   scene.add(stars);
   nightOnly.push(stars);
 }
@@ -827,6 +1070,8 @@ function skyTexture() {
 const scenery = createScenery(scene, renderer, STATIONS);
 // ── 현장 자재(화질 1차): 강판·파이프·현장 사무소·가스통·케이블 드럼. 적치 블록 자리는 피한다 ──
 const clutter = createClutter(scene, STATIONS, scenery.obstacles);
+// ── 규모감(2026-11-22): 배경 도크·골리앗 열·의장선·앞바다의 배. 낮/밤 전환이 훑기 전에 만든다 ──
+createBackdrop(scene, { seaY: SEA_Y, coastX: X_SEA });
 // ── 걷기 모드: 주인공이 야드를 걸어서 견학 ──
 const walkBtn = document.getElementById('walk');
 walk = createWalk({
@@ -853,6 +1098,13 @@ walk = createWalk({
     if (open) tour.setCollapsed(false);
   },
 });
+// 걷는 동안의 작은 지도(2026-11-22): 내 자리와 방향. 누르면 큰 지도(장소를 고르면 그 앞으로 옮겨짐)
+const miniMap = createMiniMap({
+  el: document.getElementById('minimap')!,
+  stations: STATIONS,
+  onOpen: () => document.getElementById('map-btn')?.click(),
+  marks: EXPERIENCES.map((e) => e.at),
+});
 // ── 다중 접속(2026-11-17): 접속한 사람은 어느 장소에 있든 서로 보이고 핑·손 흔들기. 서버가 없으면 아무것도 안 보인다 ──
 const mpEl = document.getElementById('mp');
 const mpN = document.getElementById('mp-n');
@@ -861,7 +1113,7 @@ function mpDraw() {
   if (!mpEl || !mpN) return;
   mpEl.hidden = !net.online;
   // 처음 들어온 사람: 서버에 붙으면 별명 창을 한 번 띄운다(임의로 지은 별명이 채워져 있고 고칠 수 있다)
-  if (net.online && !net.me.name && !mpAsked) {
+  if (net.online && !net.me.name && !mpAsked && !document.body.classList.contains('opening-on')) {
     mpAsked = true;
     mpAsk?.();
   }
@@ -940,6 +1192,9 @@ function setWalk(on: boolean, at?: [number, number]) {
     quick.stop();
     tour.stop();
     walk.enter(at);
+    // 보던 장소 앞에서 걷기 시작한다(2026-11-22 검토: 도크를 보다 눌러도 정문에 섰다). 이미 그 근처에 서 있었으면 그대로
+    const st = STATIONS[tour.current];
+    if (!at && st && Math.hypot(walk.position.x - st.at[0], walk.position.z - st.at[2]) > 160) walk.teleport(tour.current);
   } else {
     walk.exit();
     document.body.classList.remove('walk-info');
@@ -979,7 +1234,7 @@ const operate = createOperate({
     setSway,
     trolleyY: TROLLEY_Y,
     hookTop: TROLLEY_Y - 4 - HOOK_DROP,
-    cab: new THREE.Vector3(-6, CRANE_H - 2, -CRANE_RAIL_Z + 4),
+    cab: cabPosition,
   },
   erection,
   dock: { x0: -HALF_L, x1: HALF_L, halfW: HALF_W, floorY: -DOCK.depth },
@@ -987,20 +1242,31 @@ const operate = createOperate({
   trolleyZ: CRANE_RAIL_Z - 6,
   truck: { x: -140, hx: 17, hz: 5.5, top: 2.2 },
   hud: document.getElementById('op-hud')!,
-  onExit: () => stopOperate(),
+  // 한 척 짓기 중의 '그만'·Esc 는 그쪽이 받는다(올린 블록이 있으면 건조 기록으로)
+  onExit: () => (build.step === 'crane' ? build.leave() : stopOperate()),
+  onLanded: (r) => build.onLanded(r),
+  onImpact: (speed, hard) => sound.thump(hard ? 1 : Math.min(0.6, 0.25 + speed)),
+  onEmpty: () => build.onEmpty(),
+  onSeated: () => build.onSeated(),
+  fitStart: (name) => build.fitStart(name),
+  wind: () => build.wind,
 });
 const DOCK_INDEX = STATIONS.findIndex((s) => s.id === 'dock');
-function startOperate() {
+function startOperate(quickMode = false) {
   quick.stop();
   setWalk(false);
   tour.select(DOCK_INDEX);
   tour.stop();
   launch.abort();
-  operate.enter();
+  operating = true;
+  erection.resume(); // 지금 차례의 블록으로 상태줄을 다시 쓴다(자동 탑재가 돌리던 문구가 남지 않게)
+  operate.enter({ quick: quickMode });
   document.body.classList.add('operating');
 }
 function stopOperate() {
   operate.exit();
+  operating = false;
+  erection.resume();
   document.body.classList.remove('operating');
   tour.go(DOCK_INDEX);
 }
@@ -1009,7 +1275,8 @@ const LAUNCH_INDEX = STATIONS.findIndex((s) => s.id === 'launch');
 const launchTry = createLaunchTry({
   hud: document.getElementById('ln-hud')!,
   launch,
-  onExit: () => stopLaunchTry(),
+  onExit: () => (build.step === 'launch' ? build.leave() : stopLaunchTry()),
+  onResult: (r) => build.onLaunched(r),
   onHorn: () => sound.horn(),
   prepare: () => {
     if (erection.placed() < blocks.length) erection.setPlaced(blocks.length);
@@ -1024,11 +1291,13 @@ function startLaunchTry() {
   if (matchMedia('(max-width: 700px)').matches) tour.flyTo([175, 260, 330], [125, -4, 0]);
   else tour.flyTo([150, 95, 175], [95, -4, 0]);
   document.body.classList.add('operating');
+  if (erection.placed() < blocks.length) notice('남은 블록 탑재는 건너뛰고, 선체가 완성된 시점으로 넘어갑니다.');
   launchTry.start();
 }
 function stopLaunchTry() {
   launchTry.exit();
   launch.abort();
+  if (build.step === 'off' || build.step === 'offer') notice('진수한 배는 의장 안벽으로 갔습니다. 도크에서는 다음 배의 탑재가 처음부터 시작됩니다.');
   document.body.classList.remove('operating');
   tour.go(LAUNCH_INDEX);
 }
@@ -1058,11 +1327,42 @@ const quick = createQuickTour({
     { label: '블록 인양 학습', run: () => { tour.go(DOCK_INDEX); setTimeout(() => tour.flyTo(liftLab.view.cam, liftLab.view.look), 1800); } },
   ],
   onStart: () => tour.setCollapsed(true),
-  onStop: () => tour.setCollapsed(matchMedia('(max-width: 700px)').matches),
+  onStop: () => tour.restore(),
 });
 // 주소에 장소(#id)나 확인용 옵션이 없으면 들어오자마자 시작. ?qt 는 언제나 시작(자동 시험용 window.__qt)
-const QT_SKIP = ['operate', 'launchtry', 'walk', 'cam', 'still', 't', 'map', 'blocks'];
-if (params.has('qt') || (!firstHash && !QT_SKIP.some((k) => params.has(k)))) quick.start();
+const QT_SKIP = ['operate', 'launchtry', 'walk', 'cam', 'still', 't', 'map', 'blocks', 'forces', 'turn', 'try'];
+// ── 한 척 짓기(2026-11-22): 조작 체험 셋을 내 배 한 척을 짓는 순서로 꿴다. 들어오면 견학 대신 이것을 먼저 권한다 ──
+/** 짧은 암전 컷: 화면을 가린 사이에 장면을 바꾼다(단계 사이를 카메라 비행 대신 컷으로) */
+function cut(fn: () => void) {
+  const f = document.getElementById('fade');
+  if (!f) return fn();
+  f.classList.add('on');
+  window.setTimeout(() => {
+    fn();
+    window.setTimeout(() => f.classList.remove('on'), 140);
+  }, 420);
+}
+const build = createBuild({
+  el: document.getElementById('build-hud')!,
+  startCrane: () => cut(() => startOperate(true)),
+  nextBlock: () => cut(() => operate.nextBlock()),
+  stopCrane: () => stopOperate(),
+  startLaunch: () => startLaunchTry(),
+  stopLaunch: () => stopLaunchTry(),
+  tour: () => quick.start(),
+  progress: () => ({ placed: erection.placed(), total: blocks.length }),
+  sound: { on: () => sound.on, toggle: () => soundBtn?.click() },
+});
+document.getElementById('build-btn')?.addEventListener('click', () => (build.active ? build.quit() : build.offer()));
+if (params.has('build')) Object.assign(window, { __build: build, __op: operate });
+const autoTour = !firstHash && !QT_SKIP.some((k) => params.has(k));
+// 처음 들어오면 오프닝 장면(아래)을 먼저 보여 주고, 끝나면 빠른 견학을 시작한다. ?qt 는 오프닝 없이 바로(자동 시험), ?open 은 오프닝만 확인
+// 조작 체험(?operate, ?launchtry)과 함께 주면 체험이 먼저다: 둘이 같은 장면·카메라를 덮어쓰지 않게
+const wantOpening = (params.has('open') && !params.has('operate') && !params.has('launchtry')) || (autoTour && !params.has('qt'));
+/** ?open=초: 그 순간에서 멈춘다(캡처용). 잘못된 값·너무 큰 값으로 미리 돌리기가 끝나지 않는 일을 막는다 */
+const openHold = Math.min(10, Math.max(0, Number(params.get('open')) || 0));
+if (!wantOpening && params.has('qt')) quick.start();
+else if (!wantOpening && (autoTour || params.has('build'))) build.offer();
 if (params.has('qt')) (window as unknown as { __qt: unknown }).__qt = quick;
 if (params.has('operate')) {
   startOperate();
@@ -1090,15 +1390,16 @@ const dayNight = createDayNight({
 const timeBtn = document.getElementById('time');
 function timeLabel() {
   if (!timeBtn) return;
-  timeBtn.textContent = dayNight.mode === 'day' ? '밤으로' : '낮으로';
-  timeBtn.setAttribute('aria-label', dayNight.mode === 'day' ? '밤 장면으로 바꾸기' : '낮 장면으로 바꾸기');
+  const next = dayNight.mode === 'day' ? '노을' : dayNight.mode === 'dusk' ? '밤' : '낮';
+  timeBtn.textContent = `${next}${next === '노을' ? '로' : '으로'}`;
+  timeBtn.setAttribute('aria-label', `${next} 장면으로 바꾸기`);
 }
 /** 해·달이 비추는 방향(낮/밤 전환이 정한 위치를 원점 기준 방향으로 기억) */
 const sunOffset = new THREE.Vector3();
 function timeChanged() {
   sunOffset.copy(moon.position).normalize().multiplyScalar(600);
-  lightPool.setNight(dayNight.mode === 'night');
-  scenery.setDay(dayNight.mode === 'day');
+  lightPool.setNight(dayNight.mode !== 'day');
+  scenery.setTime(dayNight.mode);
   timeLabel();
 }
 timeBtn?.addEventListener('click', () => {
@@ -1106,6 +1407,88 @@ timeBtn?.addEventListener('click', () => {
   timeChanged();
 });
 timeChanged();
+
+// ── 사진 모드와 시점 공유(2026-11-22, photo.ts) ──
+const photo = createPhoto({
+  bar: document.getElementById('photo-bar')!,
+  canvas,
+  render: () => renderer.render(scene, camera),
+  link: () => {
+    const r = (n: number) => String(Math.round(n * 10) / 10);
+    const cam = [camera.position.x, camera.position.y, camera.position.z, controls.target.x, controls.target.y, controls.target.z].map(r).join(',');
+    return `${location.origin}${location.pathname}?${dayNight.mode}&blocks=${erection.placed()}&cam=${cam}#${STATIONS[tour.current]?.id ?? 'dock'}`;
+  },
+  // 사진에는 장소 팻말을 넣지 않는다
+  onToggle: (on) => yard.showLabels(!on),
+});
+document.getElementById('photo')?.addEventListener('click', () => {
+  quick.stop();
+  photo.toggle();
+});
+if (params.has('forces')) setForces(true);
+// ?try=이름: 그 체험을 연 채로 시작(heat weld level spray heel helm bottle). window.__tries.debug() 로 상태를 읽는다(자동 시험용)
+if (params.has('try')) {
+  Object.assign(window, { __tries: tries });
+  window.setTimeout(() => tries.start(params.get('try') ?? ''), 600);
+}
+// ?turn: 블록 세우기를 연 채로 시작. ?turn=0~1 은 그 기울기에서 멈춤(확인용)
+if (params.has('turn'))
+  setTimeout(() => {
+    startTurn();
+    const v = params.get('turn');
+    if (v) {
+      turnover.hold(Number(v));
+      // 캡처용: 카메라를 날리지 않고 바로 그 자리에
+      tour.stop();
+      camera.position.set(...turnover.view.cam);
+      controls.target.set(...turnover.view.look);
+      controls.update();
+    }
+  }, 300); // 확인용: 힘 보기를 켠 채로 시작
+// ── 오프닝 장면(2026-11-22): 노을 진 도크에서 약 10초, 그다음 빠른 견학 ──
+// ?open 은 언제나 오프닝, ?open=초 는 그 순간에서 멈춘다(캡처용)
+const OPENING_SEC = 10;
+const opening = createOpening({
+  el: document.getElementById('opening')!,
+  fade: document.getElementById('fade')!,
+  sec: OPENING_SEC,
+  hold: openHold > 0,
+  onEnd: () => {
+    dayNight.apply(openingBack, false);
+    timeChanged();
+    yard.showLabels(true);
+    tour.stop();
+    if (params.has('qt')) quick.start();
+    else if (autoTour) {
+      tour.go(DOCK_INDEX, true);
+      build.offer();
+    }
+    else tour.go(DOCK_INDEX, true);
+  },
+});
+/** 오프닝이 끝나면 돌아갈 시간대(사용자가 고른 것, 없으면 낮) */
+const openingBack = dayNight.mode;
+if (wantOpening) {
+  dayNight.apply('dusk', false);
+  timeChanged();
+  // 블록 하나가 훅에 매달려 자리로 가는 순간부터: 13개가 앉은 상태에서 다음 블록을 들어 올린 직후까지 미리 돌린다
+  const hold = openHold;
+  erection.setPlaced(13);
+  for (let x = 0; x < 18.5 + hold; x += 0.05) erection.update(0.05);
+  for (const b of erection.placedBoxes().slice(-3)) welding.start(b);
+  for (let x = 0; x < 2; x += 0.05) welding.update(0.05);
+  // 바다 쪽 게이트 옆 낮은 자리에서 선체를 올려다보다가, 도크 전체가 보이는 높이로 천천히 오른다
+  camera.position.set(128, 7, 44);
+  controls.target.set(20, 14, -4);
+  controls.update();
+  tour.flyTo([165, 62, 150], [-10, -4, 0], OPENING_SEC + 1.5);
+  if (hold) {
+    tour.update(hold);
+    tour.stop();
+  }
+  yard.showLabels(false);
+  opening.start();
+}
 
 // ── 화면 크기·반복 ────────────────────────────────────────
 function resize() {
@@ -1151,6 +1534,7 @@ function applyQuality(level: number) {
   }
   moon.castShadow = level < 5;
   scenery.setReflection(level < 4);
+  dayNight.setNoReflection(level >= 4);
   if (recompile)
     scene.traverse((o) => {
       const m = (o as THREE.Mesh).material;
@@ -1205,6 +1589,9 @@ renderer.setAnimationLoop(() => {
     if (live && f) live.textContent = f.status();
   }
   if (atDock) liftLab.update(dt);
+  if (atDock) turnover.update(dt);
+  tries.update(dt);
+  forces.update(dt, atDock && !opening.active);
   if (dayNight.mode === 'night') fog.update(dt, t);
   // 다중 접속: 보고 있는 장소를 알리고, 걷는 동안만 자리를 보낸다
   net.setStation(here);
@@ -1212,6 +1599,7 @@ renderer.setAnimationLoop(() => {
   else net.setPos(0, 0, 0, 0);
   peers.update(dt);
   quick.update(dt);
+  opening.update(dt);
   tour.update(dt);
   yard.fadeLabels(camera.position, tour.current);
   // 소리: 크레인이 움직이는 빠르기와 용접 아크까지의 거리로 크기를 정한다
@@ -1236,10 +1624,18 @@ renderer.setAnimationLoop(() => {
     if (!ROAD_STATIONS.has(here) && !still) traffic.update(dt * speed);
     movers = traffic.movers(dt);
     walk.update(dt);
+    miniMap.update(walk.position.x, walk.position.z, walk.heading);
     const me = walk.pusher();
     props.update(dt, me ? [me, ...movers] : movers);
   }
-  if (!operate.cabView) controls.update();
+  if (!operate.cabView) {
+    const maxPolarAngle = controls.maxPolarAngle;
+    if (dockFloorViewActive && !operate.active && !walk?.active && !launchTry.active) {
+      controls.maxPolarAngle = Math.PI * 0.6;
+    }
+    controls.update();
+    controls.maxPolarAngle = maxPolarAngle;
+  }
   // 그림자 범위와 조명 묶음을 보는 곳으로. 그림자는 8 m 단위로만 옮겨 가장자리가 일렁이지 않게
   shadowAt.set(Math.round(controls.target.x / 8) * 8, 0, Math.round(controls.target.z / 8) * 8);
   moon.target.position.copy(shadowAt);

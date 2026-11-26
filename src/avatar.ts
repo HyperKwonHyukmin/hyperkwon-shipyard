@@ -24,7 +24,7 @@ function std(color: number, roughness = 0.7) {
   return new THREE.MeshStandardMaterial({ color, roughness, metalness: 0.05 });
 }
 
-function buildPerson(helmet: number, suit: number) {
+function buildPerson(helmet: number, suit: number, vestColor = 0xf0641e) {
   const g = new THREE.Group();
   const body = new THREE.Group();
   g.add(body);
@@ -34,7 +34,7 @@ function buildPerson(helmet: number, suit: number) {
     skin: std(0xf2cfae, 0.75),
     helmet: std(helmet, 0.35),
     boot: std(0x2b2622, 0.6),
-    vest: std(0xf0641e, 0.7),
+    vest: std(vestColor, 0.7),
     band: new THREE.MeshStandardMaterial({ color: 0xf3f0c8, roughness: 0.3, metalness: 0.4 }),
     glove: std(0xf1eee6, 0.8),
     eye: std(0x23201e, 0.4),
@@ -127,8 +127,8 @@ export function bakeMeshes(meshes: THREE.Mesh[], ref: THREE.Object3D, tint?: num
  * peers.ts 가 부품별 InstancedMesh 로 그려, 사람 수와 상관없이 그리기 호출은 부품 수만큼이다.
  * 좌표는 사람 기준(SCALE 적용 전). 다리·팔은 관절이 원점이다.
  */
-export function avatarParts() {
-  const p = buildPerson(0xffffff, 0x3d5a80);
+export function avatarParts(suit = 0x3d5a80, vest = 0xf0641e) {
+  const p = buildPerson(0xffffff, suit, vest);
   p.g.updateMatrixWorld(true);
   const under = (o: THREE.Object3D, roots: THREE.Object3D[]) => {
     for (let a: THREE.Object3D | null = o; a; a = a.parent) if (roots.includes(a)) return true;

@@ -1,6 +1,6 @@
 /**
  * W3 작업자 무리(2026-11-15, PLAN.md 6장). 사용자: "안이 텅 비어 있다" — 장소마다 사람이 0~1명이라 빈 창고처럼 보였다.
- * 한 사람 = 부품 8개(몸통, 머리, 안전모, 팔 둘, 다리 둘, 용접 불빛). 부품마다 InstancedMesh 하나로 모든 작업자를 그린다
+ * 한 사람 = 주인공과 같은 모양의 부품(몸+머리 두 벌 중 하나, 안전모, 팔 둘, 다리 둘, 용접면, 용접 불빛). 부품마다 InstancedMesh 하나로 모든 작업자를 그린다
  * → 사람이 수십 명이어도 그리기 호출은 부품 수만큼(CLAUDE.md: 사람 한 명당 그리기 호출을 늘리지 않는다).
  * 다중 접속의 '다른 접속자'도 같은 방식으로 그릴 생각이다(주인공 avatar.ts 를 사람 수만큼 만들지 않음).
  * 동작: weld(쪼그려 앉아 팔을 앞으로, 손끝 불빛 깜빡임), walk(두 점 사이 왕복), signal(한 팔을 들어 흔듦), stand(살짝 흔들림).
@@ -8,6 +8,7 @@
  * 자리는 장소 중심 바닥 기준(factory/fill.ts 와 같은 좌표). 고정 난수만 쓴다(누가 열어도 같은 야드).
  */
 import * as THREE from 'three';
+import { avatarParts } from './avatar';
 
 type Action = 'weld' | 'walk' | 'signal' | 'stand';
 interface Spec {
@@ -119,11 +120,7 @@ const LAYOUT: Record<string, Spec[]> = {
 };
 
 const std = (color: number, roughness = 0.8) => new THREE.MeshStandardMaterial({ color, roughness, metalness: 0.05 });
-/** 조끼·작업복(몸통) 색: 주황 조끼, 형광 연두 조끼, 남색 작업복, 회청 작업복 */
-const BODY = [0xe07a1f, 0xc6d22c, 0x2c3e66, 0x4a5d78, 0xe07a1f, 0x2c3e66];
 const HELMET = [0xf2f2ee, 0xf2c230, 0xf2f2ee, 0x2f6fbf, 0xf2f2ee];
-const LEGS = [0x23314f, 0x2c3e66, 0x3b4048];
-const SKIN = [0xe8c4a0, 0xd9ad85, 0xc99470];
 
 /** 고정 난수(작업자 색·흔들림 위상) */
 function mulberry(seed: number) {
@@ -166,16 +163,22 @@ export function createCrowd(scene: THREE.Scene, stationAt: (id: string) => [numb
   }
   const n = list.length;
 
-  // ── 부품(키 약 1.8 m). 팔·다리는 위 끝이 원점(관절)에 오게 아래로 옮긴 형상 ──
-  const hang = (g: THREE.BufferGeometry, len: number) => g.translate(0, -len / 2, 0);
+  // ── 부품: 주인공과 같은 둥근 작업자(avatar.ts 의 avatarParts)를 부품별 InstancedMesh 로 ──
+  // 2026-11-22 사용자: "NPC 들이 너무 성의 없이 대충 만들었다" — 상자를 이어 붙인 사람이라 주인공과 따로 놀았다.
+  // 몸(몸통+머리)은 작업복·조끼 색이 다른 두 벌, 안전모는 흰색으로 구워 사람마다 색을 입힌다. 용접공은 얼굴 가리개를 쓴다.
+  const A = avatarParts(0x2c3e66, 0xe8791f); // 남색 작업복 + 주황 조끼
+  const B = avatarParts(0x55657c, 0xc6d22c); // 회청 작업복 + 형광 연두 조끼
+  const SCALE = A.scale;
+  const vmat = (roughness = 0.75) => new THREE.MeshStandardMaterial({ vertexColors: true, roughness, metalness: 0.05 });
   const parts = {
-    torso: new THREE.InstancedMesh(new THREE.BoxGeometry(0.34, 0.62, 0.48), std(0xffffff, 0.7), n),
-    head: new THREE.InstancedMesh(new THREE.SphereGeometry(0.12, 10, 8), std(0xffffff, 0.6), n),
-    helmet: new THREE.InstancedMesh(new THREE.SphereGeometry(0.155, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2), std(0xffffff, 0.4), n),
-    armL: new THREE.InstancedMesh(hang(new THREE.BoxGeometry(0.11, 0.62, 0.11), 0.62), std(0xffffff, 0.7), n),
-    armR: new THREE.InstancedMesh(hang(new THREE.BoxGeometry(0.11, 0.62, 0.11), 0.62), std(0xffffff, 0.7), n),
-    legL: new THREE.InstancedMesh(hang(new THREE.BoxGeometry(0.15, 0.88, 0.16), 0.88), std(0xffffff, 0.85), n),
-    legR: new THREE.InstancedMesh(hang(new THREE.BoxGeometry(0.15, 0.88, 0.16), 0.88), std(0xffffff, 0.85), n),
+    bodyA: new THREE.InstancedMesh(A.body, vmat(), n),
+    bodyB: new THREE.InstancedMesh(B.body, vmat(), n),
+    helmet: new THREE.InstancedMesh(A.helmet, vmat(0.4), n),
+    armL: new THREE.InstancedMesh(A.arms[0], vmat(), n),
+    armR: new THREE.InstancedMesh(A.arms[1], vmat(), n),
+    legL: new THREE.InstancedMesh(A.leg, vmat(0.85), n),
+    legR: new THREE.InstancedMesh(A.leg, vmat(0.85), n),
+    mask: new THREE.InstancedMesh(new THREE.BoxGeometry(0.07, 0.36, 0.44), std(0x1b1e22, 0.5), n),
   };
   const arc = new THREE.InstancedMesh(
     new THREE.SphereGeometry(0.2, 8, 6), // 기본 시점(약 70 m)에서 몇 화소는 되게
@@ -183,15 +186,17 @@ export function createCrowd(scene: THREE.Scene, stationAt: (id: string) => [numb
     n,
   );
   const col = new THREE.Color();
+  /** 사람마다 어느 옷(0 = A, 1 = B) */
+  const suitOf: number[] = [];
   list.forEach((w, i) => {
-    const body = BODY[Math.floor(rnd() * BODY.length)];
-    parts.torso.setColorAt(i, col.setHex(body));
-    parts.armL.setColorAt(i, col.setHex(body));
-    parts.armR.setColorAt(i, col.setHex(body));
-    const legs = body === 0x2c3e66 || body === 0x4a5d78 ? body : LEGS[Math.floor(rnd() * LEGS.length)];
-    parts.legL.setColorAt(i, col.setHex(legs));
-    parts.legR.setColorAt(i, col.setHex(legs));
-    parts.head.setColorAt(i, col.setHex(SKIN[Math.floor(rnd() * SKIN.length)]));
+    const v = rnd() < 0.6 ? 0 : 1;
+    suitOf.push(v);
+    // 팔·다리는 남색으로 구운 한 벌을 같이 쓰고, 회청 작업복은 밝게 입힌다
+    const tint = v ? col.setRGB(1.75, 1.6, 1.45) : col.setRGB(1, 1, 1);
+    for (const m of [parts.armL, parts.armR, parts.legL, parts.legR]) m.setColorAt(i, tint);
+    const shade = 0.9 + rnd() * 0.2;
+    parts.bodyA.setColorAt(i, col.setRGB(shade, shade, shade));
+    parts.bodyB.setColorAt(i, col.setRGB(shade, shade, shade));
     parts.helmet.setColorAt(i, col.setHex(HELMET[Math.floor(rnd() * HELMET.length)]));
     void w;
   });
@@ -203,27 +208,26 @@ export function createCrowd(scene: THREE.Scene, stationAt: (id: string) => [numb
   arc.frustumCulled = false;
   scene.add(arc);
 
-  // ── 자세 계산 ──
+  // ── 자세 계산(좌표는 avatar.ts 의 사람 기준: 엉덩이 관절 y 0.62, 어깨 y 1.24, 앞 = +x) ──
+  const HIP = A.legAt[0].y;
   const base = new THREE.Matrix4();
+  const bodyM = new THREE.Matrix4();
   const m4 = new THREE.Matrix4();
   const tmp = new THREE.Matrix4();
   const q = new THREE.Quaternion();
   const up = new THREE.Vector3(0, 1, 0);
-  const one = new THREE.Vector3(1, 1, 1);
+  const size = new THREE.Vector3(SCALE, SCALE, SCALE);
   const zero = new THREE.Vector3(0, 0, 0);
+  const none = new THREE.Vector3(0, 0, 0);
   const pos = new THREE.Vector3();
   const zAxis = new THREE.Vector3(0, 0, 1);
-  /** base 기준 (x, y, z) 관절에서 z 축으로 angle 만큼 돌린 부품(앞 = +x 이므로 z 축 회전 = 앞뒤로 흔듦) */
-  function joint(mesh: THREE.InstancedMesh, i: number, x: number, y: number, z: number, angle: number) {
+  /** ref 기준 (x, y, z) 관절에서 z 축으로 angle 만큼 돌린 부품(앞 = +x 이므로 z 축 회전 = 앞뒤로 흔듦) */
+  function joint(mesh: THREE.InstancedMesh, i: number, ref: THREE.Matrix4, x: number, y: number, z: number, angle: number) {
     tmp.makeRotationAxis(zAxis, angle).setPosition(x, y, z);
-    mesh.setMatrixAt(i, m4.multiplyMatrices(base, tmp));
-  }
-  function place(mesh: THREE.InstancedMesh, i: number, x: number, y: number, z: number) {
-    tmp.makeTranslation(x, y, z);
-    mesh.setMatrixAt(i, m4.multiplyMatrices(base, tmp));
+    mesh.setMatrixAt(i, m4.multiplyMatrices(ref, tmp));
   }
   function hide(mesh: THREE.InstancedMesh, i: number) {
-    mesh.setMatrixAt(i, m4.compose(zero, q.identity(), new THREE.Vector3(0, 0, 0)));
+    mesh.setMatrixAt(i, m4.compose(zero, q.identity(), none));
   }
 
   function pose(w: Worker, i: number, t: number) {
@@ -233,7 +237,7 @@ export function createCrowd(scene: THREE.Scene, stationAt: (id: string) => [numb
       return;
     }
     const p = t + w.phase;
-    let hip = 0.92;
+    let drop = 0; // 엉덩이를 낮춘 만큼
     let legA = 0;
     let legB = 0;
     let armA = 0;
@@ -242,50 +246,55 @@ export function createCrowd(scene: THREE.Scene, stationAt: (id: string) => [numb
     let glow = false;
     if (w.act === 'walk') {
       const s = Math.sin(p * 6.5);
-      legA = s * 0.5;
-      legB = -s * 0.5;
-      armA = -s * 0.45;
-      armB = s * 0.45;
-      hip = 0.92 + Math.abs(Math.cos(p * 6.5)) * 0.03;
+      legA = s * 0.55;
+      legB = -s * 0.55;
+      armA = -s * 0.5;
+      armB = s * 0.5;
+      drop = -Math.abs(Math.cos(p * 6.5)) * 0.04;
+      lean = -0.06;
     } else if (w.act === 'weld') {
       // 쪼그려 앉음: 허벅지를 앞으로 들어 엉덩이를 낮춤, 두 팔을 앞 아래로, 몸을 앞으로 숙임
-      hip = 0.5;
-      legA = legB = 1.35;
+      drop = 0.3;
+      legA = legB = 1.3;
       armA = armB = 1.0 + Math.sin(p * 1.3) * 0.08;
-      lean = -0.35;
+      lean = -0.32;
       glow = Math.sin(p * 29) > -0.4 && Math.sin(p * 0.5) > -0.8; // 짧게 끊기며 대부분 켜짐
     } else if (w.act === 'signal') {
-      armB = Math.PI - 0.25 + Math.sin(p * 3.2) * 0.35; // 오른팔을 들어 흔듦
+      armB = 2.5 + Math.sin(p * 3.2) * 0.3; // 오른팔을 들어 흔듦
       armA = 0.1;
-      hip = 0.92;
     } else {
-      armA = Math.sin(p * 0.9) * 0.05;
-      armB = -armA;
+      // 서 있기: 숨쉬듯 살짝 흔들리고, 가끔 한 팔을 들어 가리킨다
+      lean = Math.sin(p * 0.6) * 0.025;
+      armA = Math.sin(p * 0.9) * 0.06;
+      const point = Math.max(0, Math.sin(p * 0.23 + w.phase) - 0.86) / 0.14;
+      armB = -armA + point * 1.15;
     }
     q.setFromAxisAngle(up, w.dir);
     pos.set(w.x, w.y, w.z);
-    base.compose(pos, q, one);
-    // 다리(엉덩이 관절)
-    joint(parts.legL, i, 0, hip, -0.1, legA);
-    joint(parts.legR, i, 0, hip, 0.1, legB);
-    // 몸통은 엉덩이 위에서 앞으로 숙임(lean, z 축)
-    tmp.makeRotationAxis(zAxis, lean).setPosition(0, hip, 0);
-    const torsoBase = new THREE.Matrix4().multiplyMatrices(base, tmp);
-    const saved = base.clone();
-    base.copy(torsoBase);
-    place(parts.torso, i, 0, 0.31, 0);
-    place(parts.head, i, 0, 0.76, 0);
-    place(parts.helmet, i, 0, 0.8, 0);
-    joint(parts.armL, i, 0, 0.58, -0.3, armA);
-    joint(parts.armR, i, 0, 0.58, 0.3, armB);
+    base.compose(pos, q, size);
+    const hipY = HIP - drop;
+    joint(parts.legL, i, base, 0, hipY, A.legAt[0].z, legA);
+    joint(parts.legR, i, base, 0, hipY, A.legAt[1].z, legB);
+    // 몸(몸통+머리)은 엉덩이 관절에서 앞으로 숙인다: 엉덩이로 옮김 → 숙임 → 몸 좌표의 엉덩이 높이만큼 되돌림
+    tmp.makeRotationAxis(zAxis, lean).setPosition(0, hipY, 0);
+    bodyM.multiplyMatrices(base, tmp);
+    bodyM.multiply(tmp.makeTranslation(0, -HIP, 0));
+    const mine = suitOf[i] ? parts.bodyB : parts.bodyA;
+    mine.setMatrixAt(i, bodyM);
+    hide(suitOf[i] ? parts.bodyA : parts.bodyB, i);
+    parts.helmet.setMatrixAt(i, bodyM);
+    joint(parts.armL, i, bodyM, A.armAt[0].x, A.armAt[0].y, A.armAt[0].z, armA);
+    joint(parts.armR, i, bodyM, A.armAt[1].x, A.armAt[1].y, A.armAt[1].z, armB);
+    if (w.act === 'weld') {
+      // 용접면: 얼굴 앞을 가린다
+      tmp.makeTranslation(0.37, 1.66, 0);
+      parts.mask.setMatrixAt(i, m4.multiplyMatrices(bodyM, tmp));
+    } else hide(parts.mask, i);
     if (glow) {
-      // 손끝(팔 길이 0.62 를 armA 만큼 돌린 끝) 조금 앞
-      const hx = Math.sin(armA) * 0.62 + 0.12;
-      const hy = 0.58 - Math.cos(armA) * 0.62;
-      tmp.makeTranslation(hx, hy, 0);
-      arc.setMatrixAt(i, m4.multiplyMatrices(base, tmp));
+      // 손끝(어깨에서 팔 길이 0.5 를 armA 만큼 돌린 끝) 조금 앞
+      tmp.makeTranslation(Math.sin(armA) * 0.5 + 0.18, A.armAt[0].y - Math.cos(armA) * 0.5, 0);
+      arc.setMatrixAt(i, m4.multiplyMatrices(bodyM, tmp));
     } else hide(arc, i);
-    base.copy(saved);
   }
 
   function flush() {

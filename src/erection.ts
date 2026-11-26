@@ -243,6 +243,10 @@ export function createErection(scene: THREE.Scene, rig: Rig, blocks: Block[], op
     update,
     /** 지금까지 앉은 블록 수 */
     placed: () => index,
+    /** 지금 훅에 매달린 블록 번호(없으면 -1) — 힘 보기의 훅 하중 */
+    hooked: () => (index < blocks.length && steps[s]?.carry === 'hook' ? index : -1),
+    /** 모든 블록의 제자리 경계 상자(탑재 순서대로) */
+    boxes: () => info.map((f) => f.box),
     /** 건조 시점 막대: n 개가 앉은 상태로 옮기고 다음 블록부터 이어서 탑재 */
     setPlaced: (n: number) => reset(Math.min(Math.max(0, Math.round(n)), blocks.length)),
   };

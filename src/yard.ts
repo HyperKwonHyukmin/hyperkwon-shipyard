@@ -82,9 +82,12 @@ function label(no: number, name: string) {
   c.width = 640;
   c.height = 128;
   const g = c.getContext('2d')!;
+  // 상자 폭을 글자 길이에 맞춘다(2026-11-22 검토: 상자가 글자보다 훨씬 넓었다)
+  g.font = '700 56px Pretendard, system-ui, sans-serif';
+  const wide = Math.min(632, Math.ceil(130 + g.measureText(name).width + 34));
   g.fillStyle = 'rgba(0,37,84,0.88)';
   g.beginPath();
-  g.roundRect(4, 4, 632, 120, 28);
+  g.roundRect(4, 4, wide, 120, 28);
   g.fill();
   g.fillStyle = '#008233';
   g.beginPath();
@@ -100,8 +103,10 @@ function label(no: number, name: string) {
   g.fillText(name, 130, 68);
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
-  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, fog: false, depthWrite: false, transparent: true }));
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, fog: false, depthWrite: false, depthTest: false, toneMapped: false, transparent: true }));
   s.scale.set(40, 8, 1);
+  s.center.set(0.1, 0.5); // 번호 동그라미가 장소 위에 오게(오른쪽 빈 칸 때문에 치우쳐 보이지 않게)
+  s.renderOrder = 5;
   return s;
 }
 
@@ -282,8 +287,14 @@ export function buildYard(scene: THREE.Scene, stations: Station[]) {
   function fadeLabels(cam: THREE.Vector3, current: number) {
     labels.forEach((l, i) => {
       const d = cam.distanceTo(l.position);
-      (l.material as THREE.SpriteMaterial).opacity = i === current ? THREE.MathUtils.clamp((d - 140) / 60, 0, 1) : 1;
+      // 멀리서(전체 보기) 봐도 읽히게 거리만큼 키운다(2026-11-22 검토: 전체 보기에서 이름표가 점처럼 작았다)
+      const k = THREE.MathUtils.clamp(d / 260, 1, 3.2);
+      l.scale.set(40 * k, 8 * k, 1);
+      // 지금 장소의 이름은 위 제목과 패널에 있으므로 가까이서는 아예 숨긴다(반투명으로 남아 장면을 가렸다). 멀리 물러나면 다시 보인다
+      (l.material as THREE.SpriteMaterial).opacity = i === current ? (d > 320 ? 1 : 0) : 1;
     });
   }
-  return { group: g, fadeLabels };
+  /** 장소 팻말을 한꺼번에 숨긴다(오프닝 장면처럼 화면을 장면만으로 둘 때) */
+  const showLabels = (on: boolean) => labels.forEach((l) => (l.visible = on));
+  return { group: g, fadeLabels, showLabels };
 }
