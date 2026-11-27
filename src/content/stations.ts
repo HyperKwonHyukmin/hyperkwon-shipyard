@@ -35,6 +35,8 @@ export interface Station {
   look?: [number, number, number];
   /** 단계 바(아래 칩)에 쓰는 두세 글자 이름 */
   short?: string;
+  /** 휴대폰(폭 700px 이하) 시점. 세로 화면은 가로 시야가 좁고 설명 패널이 아래에 있어, 넓은 대상을 보는 장소만 따로 둔다 */
+  phoneView?: { cam: [number, number, number]; look: [number, number, number] };
   /** 쉽게 말하면: 처음 보는 사람에게 비유 한두 문장 */
   easy?: string;
   /** 현장 포인트: 엔지니어가 보는 핵심(일반 조선 공학 지식, 이 회사 내부 자료 아님) */
@@ -105,6 +107,8 @@ export const STATIONS: Station[] = [
     // 도로 건너편에서 수조(z 약 33)와 배 옆면을 본다. 설명 패널 왼쪽에 들어오게 look 을 -x(화면 오른쪽)로
     cam: [-660, 52, -48],
     look: [-652, 2, 30],
+    // 2026-11-27 "휴대폰에서 호깅 시험이 가려 안 보임": 수조(66 m)가 세로 화면 폭에 다 들어오게 2.2배 물러서고, 보는 점은 수조 가운데로
+    phoneView: { cam: [-658, 112, -139], look: [-640, 2, 33] },
   },
   {
     id: 'cutting',

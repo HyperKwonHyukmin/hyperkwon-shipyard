@@ -284,14 +284,17 @@ export function buildYard(scene: THREE.Scene, stations: Station[]) {
   });
 
   /** 지금 장소의 팻말은 카메라가 가까이 오면 흐리게(공장 안을 볼 때 화면 위를 덮지 않게, 이름은 패널에 있음) */
-  function fadeLabels(cam: THREE.Vector3, current: number) {
+  function fadeLabels(cam: THREE.Vector3, current: number, look?: THREE.Vector3) {
+    const dLook = look ? cam.distanceTo(look) : Infinity;
     labels.forEach((l, i) => {
       const d = cam.distanceTo(l.position);
       // 멀리서(전체 보기) 봐도 읽히게 거리만큼 키운다(2026-11-22 검토: 전체 보기에서 이름표가 점처럼 작았다)
       const k = THREE.MathUtils.clamp(d / 260, 1, 3.2);
       l.scale.set(40 * k, 8 * k, 1);
       // 지금 장소의 이름은 위 제목과 패널에 있으므로 가까이서는 아예 숨긴다(반투명으로 남아 장면을 가렸다). 멀리 물러나면 다시 보인다
-      (l.material as THREE.SpriteMaterial).opacity = i === current ? (d > 320 ? 1 : 0) : 1;
+      // 다른 장소의 팻말도 보는 점보다 카메라에 훨씬 가까우면(보는 대상 앞을 가리면) 숨긴다(2026-11-27: 휴대폰 설계동 시점에서 정문 팻말이 화면 아래를 덮음).
+      // 걷기에서는 보는 점이 주인공이라 팻말이 늘 그보다 멀어 그대로 보인다
+      (l.material as THREE.SpriteMaterial).opacity = i === current ? (d > 320 ? 1 : 0) : d < dLook * 0.8 ? 0 : 1;
     });
   }
   /** 장소 팻말을 한꺼번에 숨긴다(오프닝 장면처럼 화면을 장면만으로 둘 때) */

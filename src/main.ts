@@ -753,6 +753,12 @@ const designExp = createDesign(scene, [stationAt('design')[0], 0, 33]);
 factories.design = designExp;
 // ── 블록 인양 학습(P4-3): 도크 옆 빈 땅의 문형 크레인 ──
 const liftLab = createLift(scene, [-30, 0, 80]);
+/** 블록 인양 학습 시점. 휴대폰은 위 띠와 설명 시트 사이가 좁아 블록이 다 들어오게 1.7배 물러선다(2026-11-27 "휴대폰에서 가려서 안 보임") */
+function liftView() {
+  const { cam, look } = liftLab.view;
+  const k = matchMedia('(max-width: 700px)').matches ? 1.7 : 1;
+  tour.flyTo([0, 1, 2].map((i) => look[i] + (cam[i] - look[i]) * k) as [number, number, number], look);
+}
 // ── 블록 세우기(2026-11-22): 도크 옆 문형 크레인의 훅 두 개가 블록을 세우며 하중이 옮겨 가는 것을 보여 준다 ──
 const turnover = createTurnover(scene, [42, 0, 88], document.getElementById('turn-hud')!, {
   onClose: () => {
@@ -851,7 +857,7 @@ const EXPERIENCES: Experience[] = [
     run: () => {
       track('s:lift');
       visit('dock');
-      window.setTimeout(() => tour.flyTo(liftLab.view.cam, liftLab.view.look), 1800);
+      window.setTimeout(liftView, 1800);
     },
   },
   { label: '힘 보기', hint: '받침 반력·훅 하중·선체 굽힘', station: 'dock', at: [62, -42], run: () => setForces(true) },
@@ -936,7 +942,7 @@ const tour = createTour({
       <button class="btn" id="hold-view" type="button">화물창 안으로</button></div>`,
     );
     el.querySelector('#hold-view')!.addEventListener('click', () => holdView());
-    liftLab.renderPanel(el, () => tour.flyTo(liftLab.view.cam, liftLab.view.look));
+    liftLab.renderPanel(el, liftView);
     tl.addEventListener('input', () => updateTimelineLabel(Number(tl.value)));
     tl.addEventListener('change', () => {
       launch.abort();
@@ -1466,7 +1472,7 @@ const quick = createQuickTour({
     { label: '크레인 운전해 보기', run: () => startOperate() },
     { label: '직접 진수해 보기', run: () => startLaunchTry() },
     { label: '설계동 — 선체 거더 굽힘', run: () => tour.go(STATIONS.findIndex((s) => s.id === 'design')) },
-    { label: '블록 인양 학습', run: () => { tour.go(DOCK_INDEX); setTimeout(() => tour.flyTo(liftLab.view.cam, liftLab.view.look), 1800); } },
+    { label: '블록 인양 학습', run: () => { tour.go(DOCK_INDEX); setTimeout(liftView, 1800); } },
     { label: '체험 모두 보기', run: () => openExp(true) },
   ],
   onStart: () => {
@@ -1726,6 +1732,45 @@ function resize() {
 }
 window.addEventListener('resize', resize);
 resize();
+// ── 휴대폰: 설명 시트가 장면 아래쪽을 덮으면 화면 중심을 시트 위 빈 곳으로 올린다 ──
+// (2026-11-27 사용자: "설계동 호깅 시험, 블록 인양 학습이 휴대폰 화면에서 가려서 하나도 안 보임": 조작 칸은 시트 안에 있고 대상은 화면 가운데 아래에 그려져 시트에 가렸다)
+// 카메라 자리와 보는 점은 그대로 두고 투영만 옮긴다(setViewOffset): 보는 점이 위 띠와 시트 사이 가운데에 온다. 시트가 닫히면 되돌린다
+const sheetView = { want: 0, now: 0 };
+function measureSheetView() {
+  const panel = document.getElementById('panel');
+  sheetView.want = 0;
+  if (!panel || !matchMedia('(max-width: 700px)').matches || panel.classList.contains('collapsed') || getComputedStyle(panel).display === 'none') return;
+  const top = panel.getBoundingClientRect().top;
+  const hudB = document.querySelector('.hud')?.getBoundingClientRect().bottom ?? 0;
+  sheetView.want = Math.max(0, window.innerHeight / 2 - (hudB + top) / 2);
+}
+function applySheetView() {
+  if (sheetView.now < 0.5) camera.clearViewOffset();
+  else camera.setViewOffset(window.innerWidth, window.innerHeight, 0, sheetView.now, window.innerWidth, window.innerHeight);
+}
+{
+  const re = () => {
+    measureSheetView();
+    if (sheetView.now) applySheetView(); // 화면 크기가 바뀌면 새 크기로 다시
+  };
+  const panel = document.getElementById('panel');
+  if (panel) new MutationObserver(re).observe(panel, { attributes: true, attributeFilter: ['class'] });
+  new MutationObserver(re).observe(document.body, { attributes: true, attributeFilter: ['class'] }); // 걷기 중 '설명 보기'(walk-info)
+  window.addEventListener('resize', re);
+}
+/** 반복문에서: 시트가 열리고 닫힐 때 0.3초쯤에 걸쳐 옮긴다 */
+function stepSheetView(dt: number) {
+  const d = sheetView.want - sheetView.now;
+  if (Math.abs(d) < 0.5) {
+    if (sheetView.now !== sheetView.want) {
+      sheetView.now = sheetView.want;
+      applySheetView();
+    }
+    return;
+  }
+  sheetView.now += d * Math.min(1, dt * 10);
+  applySheetView();
+}
 
 // ?stats: 성능 숫자(초당 프레임, 프레임당 계산 시간, 그리기 호출, 삼각형, 조명 수)를 화면 왼쪽 아래에
 const statsEl = params.has('stats') ? document.body.appendChild(Object.assign(document.createElement('pre'), { id: 'stats' })) : null;
@@ -1842,7 +1887,7 @@ renderer.setAnimationLoop(() => {
   quick.update(dt);
   opening.update(dt);
   tour.update(dt);
-  yard.fadeLabels(camera.position, tour.current);
+  yard.fadeLabels(camera.position, tour.current, controls.target);
   // 소리: 크레인이 움직이는 빠르기와 용접 아크까지의 거리로 크기를 정한다
   if (sound.on && dt > 0) {
     trolley.getWorldPosition(tmp);
@@ -1918,6 +1963,7 @@ renderer.setAnimationLoop(() => {
       slow.sum = slow.n = 0;
     }
   }
+  stepSheetView(rawDt);
   const tRender = performance.now();
   renderer.render(scene, camera);
   if (statsEl) {

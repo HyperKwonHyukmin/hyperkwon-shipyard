@@ -358,8 +358,9 @@ export function createTour(opt: TourOptions) {
     current = i;
     visited.add(s.id);
     saveVisited(visited);
-    const p1 = new THREE.Vector3(...s.cam);
-    const t1 = new THREE.Vector3(...(s.look ?? s.at));
+    const pv = s.phoneView && matchMedia('(max-width: 700px)').matches ? s.phoneView : null;
+    const p1 = new THREE.Vector3(...(pv ? pv.cam : s.cam));
+    const t1 = new THREE.Vector3(...(pv ? pv.look : (s.look ?? s.at)));
     if (instant) {
       camera.position.copy(p1);
       controls.target.copy(t1);
