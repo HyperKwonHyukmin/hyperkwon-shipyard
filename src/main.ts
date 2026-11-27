@@ -1232,26 +1232,77 @@ function setWalk(on: boolean, at?: [number, number]) {
 }
 walkBtn?.addEventListener('click', () => setWalk(!walk!.active));
 document.getElementById('p-toggle')?.addEventListener('click', () => document.body.classList.remove('walk-info'));
-// 휴대폰: 접힌 패널은 보이지 않고, '설명' 단추로 연다(2026-11-17)
-document.getElementById('info-btn')?.addEventListener('click', () => tour.setCollapsed(false));
 // ── 휴대폰 메뉴(2026-11-15 사용자: "휴대폰에서 각 메뉴가 직관적이지 않다"): 자주 안 쓰는 단추는 '메뉴' 안으로 ──
+// 2026-11-27 정돈("너무 지저분"): 장면 위에 단추를 흩뿌리지 않고 아래 시트(#more-sheet)에 묶음별로. 위 띠의 함께 보기 단추(여기요 등)도 여기로.
+// 시트의 단추는 원래 단추(데스크톱 위 줄, 위 띠)를 대신 누른다. 글자와 눌린 표시는 열 때와 누른 뒤에 원래 단추에서 다시 읽는다
 {
-  const ctl = document.querySelector('.controls')!;
   const more = document.getElementById('more')!;
-  const setOpen = (o: boolean) => {
-    ctl.classList.toggle('open', o);
+  const sheet = document.getElementById('more-sheet')!;
+  /** [원래 단추 id, 묶음, 누르면 시트를 닫나] — 속도·소리처럼 여러 번 누르는 것은 열어 둔다 */
+  const ITEMS: [string, string, boolean][] = [
+    ['time', 'view', true],
+    ['sound', 'view', false],
+    ['speed', 'view', false],
+    ['overview', 'view', true],
+    ['map-btn', 'move', true],
+    ['mp-ping', 'mp', true],
+    ['mp-wave', 'mp', true],
+    ['mp-me', 'mp', true],
+  ];
+  const proxies = ITEMS.map(([id, g, close]) => {
+    const b = Object.assign(document.createElement('button'), { type: 'button', className: 'btn' });
+    sheet.querySelector(`[data-g="${g}"]`)?.append(b);
+    b.addEventListener('click', () => {
+      document.getElementById(id)?.click();
+      if (close) setOpen(false);
+    });
+    return [id, b] as const;
+  });
+  // 원래 단추의 글자·눌린 표시가 바뀌면 따라 바꾼다(소리 켜기는 비동기라 누른 순간에는 아직 그대로다)
+  const watch = new MutationObserver(() => sync());
+  for (const [id] of ITEMS) {
+    const src = document.getElementById(id);
+    if (src) watch.observe(src, { childList: true, characterData: true, subtree: true, attributes: true, attributeFilter: ['aria-pressed'] });
+  }
+  function sync() {
+    for (const [id, b] of proxies) {
+      const src = document.getElementById(id);
+      const t = src?.textContent?.trim() ?? '';
+      b.textContent = id === 'map-btn' ? `조선소 지도 ${t.replace(/^지도\s*/, '')}` : t;
+      const p = src?.getAttribute('aria-pressed');
+      if (p) b.setAttribute('aria-pressed', p);
+    }
+    document.getElementById('ms-mp')!.hidden = !!document.getElementById('mp')?.hidden;
+  }
+  function setOpen(o: boolean) {
+    if (o) {
+      sync();
+      tour.setCollapsed(true); // 설명 시트와 같은 자리라 하나만
+    }
+    sheet.hidden = !o;
+    document.body.classList.toggle('more-open', o);
     more.setAttribute('aria-expanded', String(o));
     more.textContent = o ? '닫기' : '메뉴';
-  };
-  more.addEventListener('click', () => setOpen(!ctl.classList.contains('open')));
-  // 2026-11-26 휴대폰 점검: 메뉴를 연 채 걷기·짓기에 들어가면 메뉴 단추가 조이스틱·걷기 단추 밑에 겹쳐 남았다 → 다른 모드로 가면 닫는다
+  }
+  more.addEventListener('click', () => setOpen(sheet.hidden));
+  // 2026-11-26 휴대폰 점검: 메뉴를 연 채 걷기·짓기에 들어가면 메뉴가 조이스틱·걷기 단추 밑에 겹쳐 남았다 → 다른 모드로 가면 닫는다
   new MutationObserver(() => {
-    if (ctl.classList.contains('open') && /\b(walking|operating|building|trying|turning|photo)\b/.test(document.body.className)) setOpen(false);
+    if (!sheet.hidden && /\b(walking|operating|building|trying|turning|photo|quicktour)\b/.test(document.body.className)) setOpen(false);
   }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
-  // 메뉴 안 단추를 누르면 닫는다(속도·소리처럼 여러 번 누르는 것은 그대로 둔다)
-  for (const id of ['overview', 'menu-map', 'time']) document.getElementById(id)?.addEventListener('click', () => setOpen(false));
-  document.getElementById('menu-map')?.addEventListener('click', () => document.getElementById('map-btn')?.click());
+  // '설명'은 여닫는 단추(2026-11-17 접힌 패널은 휴대폰에서 안 보임, 2026-11-27 다시 누르면 닫힘). 눌린 표시는 패널 상태를 따른다
+  const panelEl = document.getElementById('panel')!;
+  const infoBtn = document.getElementById('info-btn');
+  infoBtn?.addEventListener('click', () => {
+    const open = panelEl.classList.contains('collapsed');
+    if (open) setOpen(false);
+    tour.setCollapsed(!open);
+  });
+  new MutationObserver(() => infoBtn?.setAttribute('aria-pressed', String(!panelEl.classList.contains('collapsed')))).observe(panelEl, {
+    attributes: true,
+    attributeFilter: ['class'],
+  });
 }
+
 // ── 휴대폰(손가락): 단추 글자 앞 키 이름(Esc·Space·R·F·E·C)은 숨긴다(2026-11-26 휴대폰 점검: 키보드가 없는데 'Space 가열'·'R 올림') ──
 if (matchMedia('(pointer: coarse)').matches) {
   const KEY = /^(Esc|Space|[A-Z])(\s·)?\s+(?=\S)/;

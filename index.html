@@ -333,14 +333,11 @@
         /* 메뉴: 자주 쓰지 않는 단추(밤·소리·속도·전체·지도)는 '메뉴' 안으로 */
         .only-phone { display: inline-flex; }
         .controls .opt, .controls .no-phone { display: none; }
-        .controls.open { flex-wrap: wrap; justify-content: flex-end; max-width: calc(100% - 16px); }
-        .controls.open .opt { display: inline-flex; }
         #more[aria-expanded="true"] { border-color: var(--heritage); }
         /* 2026-11-15 모바일 점검: 비공식 표기가 두 줄이라 아래 요소를 그만큼 올림, 단추 글자 줄바꿈 막기, '회전'은 숨김 */
         .nav { bottom: 50px; }
         .controls { bottom: 104px; gap: 6px; }
         .controls .btn { white-space: nowrap; font-size: 13px; padding: 8px 10px; }
-        .controls.open #spin { display: none; }
         /* 2026-11-17 "장소 정보가 화면을 너무 가린다": 접힌 띠를 없애고 '설명' 단추로 연다.
            펼치면 아래 시트(단계 바·단추 자리를 덮음)라 화면 위쪽 절반은 그대로 보인다. 제목 띠도 한 줄로 줄임 */
         .panel.collapsed { display: none; }
@@ -394,7 +391,6 @@
         .acts { max-width: 100vw; padding: 0 28px 0 8px; box-sizing: border-box; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 34px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 34px), transparent); }
         .acts .hold-cap { flex: 0 0 auto; max-width: 78vw; text-align: left; }
         /* 2026-11-26 휴대폰 점검: 메뉴를 펼치면 '해 볼 것' 줄이 메뉴 단추 위에 겹쳤다 → 메뉴가 열린 동안 숨김 */
-        body:has(.controls.open) .acts { display: none; }
         /* 걷기 작은 지도가 위 제목 띠의 '여기요·손 흔들기' 줄을 덮었다 → 띠 아래로(--hud-b 는 main.ts 가 제목 띠 아래 끝을 잼) */
         .walking .minimap { top: calc(var(--hud-b, 110px) + 8px); }
         /* 2026-11-26 휴대폰 편의성·가독성: 손가락 단추 44px, 휴대폰 글자 13px 이상 */
@@ -535,6 +531,30 @@
       .opening-on .disclaimer { z-index: 13; color: #e3ebf5; }
       .fade { position: fixed; inset: 0; z-index: 30; background: #000; opacity: 0; pointer-events: none; transition: opacity .5s ease; }
       .fade.on { opacity: 1; }
+      /* 휴대폰 정돈(2026-11-27 사용자: "휴대폰 메뉴, 설명 단추 배치가 너무 지저분"): 아래 세 줄을 같은 폭(좌우 8px)으로 맞춘다.
+         해 볼 것(가로 스크롤) / 설명·체험·걷기·메뉴(같은 폭 칸) / 단계 바. 메뉴는 장면 위에 흩뿌리지 않고 아래 시트로, 위 띠의 함께 보기 단추도 그 시트로.
+         설명 시트는 단추 줄 위에서 끝나 단계 바와 단추 줄을 덮지 않는다(읽으면서 장소를 넘길 수 있게) */
+      .more-sheet[hidden] { display: none !important; }
+      @media (min-width: 701px) { .more-sheet { display: none !important; } }
+      @media (max-width: 700px) {
+        .controls { left: 8px; right: 8px; bottom: 107px; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px; }
+        .controls .btn { justify-content: center; align-items: center; text-align: center; min-width: 0; padding: 0 4px; }
+        .quicktour .controls { display: none; }
+        .acts { left: 8px; right: 8px; bottom: 157px; width: auto; max-width: none; transform: none; padding: 0 28px 0 0; scrollbar-width: none; }
+        .acts::-webkit-scrollbar { display: none; }
+        .more-open .acts { display: none; }
+        .hud .mp .btn { display: none; }
+        .panel { bottom: 157px; max-height: 44vh; } /* 2026-11-17 "장소 정보가 화면을 너무 가린다": 높이는 그대로 */
+        #info-btn[aria-pressed="true"] { border-color: var(--heritage); }
+        .more-sheet { position: fixed; left: 8px; right: 8px; bottom: 157px; z-index: 9; box-sizing: border-box; padding: 12px 14px 14px; border-radius: 14px;
+          background: var(--panel); border: 1px solid var(--line); box-shadow: 0 8px 24px rgba(0, 0, 0, .45); }
+        .more-sheet h2 { margin: 0 0 6px; font-size: 13px; font-weight: 600; color: var(--muted); }
+        .more-sheet section + section { margin-top: 12px; }
+        .more-sheet section[hidden] { display: none; }
+        .ms-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+        .ms-grid .btn { min-height: 44px; justify-content: center; text-align: center; font-size: 14px; white-space: nowrap; }
+        .ms-grid .btn[aria-pressed="true"] { border-color: var(--heritage); }
+      }
     </style>
   </head>
   <body>
@@ -556,12 +576,16 @@
       <button class="btn opt" id="speed" type="button" aria-label="공정 장면이 진행되는 속도">장면 속도 ×1</button>
       <button class="btn opt" id="spin" type="button" aria-pressed="false" aria-label="화면 자동 회전">회전</button>
       <button class="btn opt" id="overview" type="button" aria-label="조선소 전체 보기">전체 보기</button>
-      <button class="btn opt only-phone" id="menu-map" type="button">지도</button>
-      <button class="btn only-phone" id="info-btn" type="button">설명</button>
+      <button class="btn only-phone" id="info-btn" type="button" aria-pressed="false" aria-controls="panel">설명</button>
       <button class="btn" id="exp-btn" type="button" aria-haspopup="dialog" aria-controls="exp">체험 <span class="exp-n" id="exp-n"></span></button>
       <button class="btn primary no-phone" id="build-btn" type="button">한 척 짓기</button>
       <button class="btn" id="walk" type="button" aria-pressed="false">걸어서 견학</button>
       <button class="btn only-phone" id="more" type="button" aria-expanded="false" aria-label="메뉴 열기">메뉴</button>
+    </div>
+    <div class="more-sheet" id="more-sheet" role="dialog" aria-label="메뉴" hidden>
+      <section><h2>보기</h2><div class="ms-grid" data-g="view"></div></section>
+      <section><h2>이동</h2><div class="ms-grid" data-g="move"></div></section>
+      <section id="ms-mp"><h2>함께 보기</h2><div class="ms-grid" data-g="mp"></div></section>
     </div>
     <aside class="force-hud" id="force-hud" aria-label="힘 보기" hidden></aside>
     <div class="force-tag" id="force-tag" hidden></div>
