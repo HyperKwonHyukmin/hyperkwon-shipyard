@@ -46,6 +46,10 @@ export interface QuickTourOptions {
   more: { label: string; run: () => void }[];
   onStart?: () => void;
   onStop?: () => void;
+  /** 장소 하나에 들어갔다(통계: 어디까지 보는지) */
+  onLeg?: (id: string) => void;
+  /** 한 바퀴를 끝까지 봤다 */
+  onDone?: () => void;
 }
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
@@ -92,6 +96,7 @@ export function createQuickTour(o: QuickTourOptions) {
     o.prepare(l.id);
     o.go(l.index);
     o.setSpeed(l.speed);
+    o.onLeg?.(l.id);
     stepEl.textContent = `${i + 1}/${legs.length}`;
     nameEl.textContent = s.name;
     procEl.textContent = s.processes.join(' · ');
@@ -113,6 +118,7 @@ export function createQuickTour(o: QuickTourOptions) {
   /** 한 바퀴 끝: '더 볼 곳' 안내. 배속은 보통으로 */
   function finish() {
     active = false;
+    o.onDone?.();
     o.setSpeed(1);
     o.el.classList.add('is-done');
     doneEl.hidden = false;

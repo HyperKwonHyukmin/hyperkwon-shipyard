@@ -4,6 +4,9 @@
  * - 조감 견학에서는 위치를 보내지 않는다. 걷는 동안만 0.4초마다, 자리가 바뀌었을 때만. 자리와 함께 속도를 보내
  *   받는 쪽이 다음 소식까지 그 속도로 이어 그린다(2026-11-17 "상대 움직임이 뚝뚝 끊긴다").
  * - 서버가 없으면(로컬 미리보기) 몇 번 해 보고 조용히 그만둔다. 화면은 혼자일 때와 같다.
+ * - 통계(2026-11-27, 대시보드 /stats.html): 재방문 판정은 여기서 한다. 브라우저에 처음 온 날과 마지막 방문 날짜만 두고,
+ *   서버에는 '오늘 첫 방문인지, 처음/7일 안/그 전'이라는 표시만 보낸다(사람을 알아볼 값은 보내지 않는다).
+ *   체험 시작과 끝냄 같은 소식은 track(), 장소별 머문 시간은 dwell(). ?nostats 로 연 브라우저는 세지 않는다(?nostats=0 로 풂).
  */
 export type Helmet = 'yellow' | 'white' | 'orange' | 'blue';
 export const HELMETS: Helmet[] = ['yellow', 'white', 'orange', 'blue'];
@@ -33,6 +36,59 @@ interface Options {
 }
 
 const KEY = 'shipyard-me';
+/** 재방문 판정용: 처음 온 날, 마지막 방문 날, '7일 안에 다시 옴'을 보냈는가 */
+const SEEN_KEY = 'shipyard-seen';
+const NOSTATS_KEY = 'shipyard-nostats';
+/** 한국 날짜(YYYY-MM-DD) */
+const kstDay = (t = Date.now()) => new Date(t + 9 * 3600e3).toISOString().slice(0, 10);
+const daysBetween = (a: string, b: string) => Math.round((Date.parse(b) - Date.parse(a)) / 86400e3);
+
+/** ?nostats 를 주소에 주면 이 브라우저를 통계에서 뺀다(개발하며 확인하는 접속이 시범 숫자를 흐리지 않게) */
+function noStats() {
+  try {
+    const q = new URLSearchParams(location.search).get('nostats');
+    if (q === '0') localStorage.removeItem(NOSTATS_KEY);
+    else if (q !== null) localStorage.setItem(NOSTATS_KEY, '1');
+    return localStorage.getItem(NOSTATS_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+interface Seen {
+  first: string;
+  last: string;
+  back?: boolean;
+}
+/**
+ * 오늘 이 브라우저의 첫 방문이면 그 종류. hello 를 보내는 순간에 판정하고 바로 적는다
+ * (2026-11-27 Codex 검토: 서버 답을 기다려 적으면 그 사이 연 다른 탭도 '오늘 첫 방문'으로 세고,
+ *  화면을 연 날과 보내는 날이 자정을 사이에 두면 날짜가 어긋났다). 보낸 뒤 서버가 못 받는 드문 경우는 한 번 덜 센다.
+ */
+function visitKind(): { day?: 'new' | 'd7' | 'old'; back: boolean } {
+  const v = judge();
+  if (v.next)
+    try {
+      localStorage.setItem(SEEN_KEY, JSON.stringify(v.next));
+    } catch {
+      /* 저장이 막혀도 그대로 */
+    }
+  return { day: v.day, back: v.back };
+}
+function judge(): { day?: 'new' | 'd7' | 'old'; back: boolean; next?: Seen } {
+  const today = kstDay();
+  let s: Seen | null = null;
+  try {
+    s = JSON.parse(localStorage.getItem(SEEN_KEY) ?? 'null');
+  } catch {
+    /* 깨진 값은 처음 온 것으로 */
+  }
+  if (!s || typeof s.first !== 'string' || typeof s.last !== 'string') return { day: 'new', back: false, next: { first: today, last: today } };
+  if (s.last === today) return { back: false };
+  const gap = daysBetween(s.last, today);
+  const back = !s.back && daysBetween(s.first, today) <= 7;
+  return { day: gap <= 7 ? 'd7' : 'old', back, next: { first: s.first, last: today, back: s.back || back } };
+}
 /** 걷는 자리 보내는 간격(ms). 2026-11-17 '걷는 것도 부담': 초당 4번 → 2번, 제자리에서 도는 것은 보내지 않음 */
 const SEND_EVERY = 400;
 
@@ -74,6 +130,16 @@ export function createNet(o: Options) {
   let sentMoving = false;
   /** 속도를 재는 기준(약 0.1초 전의 자리와 시각) */
   let seen = { x: 0, z: 0, t: 0 };
+  // ── 통계 ──
+  const ns = noStats();
+  /** 공유된 시점 주소로 들어왔는가(이 화면의 첫 접속에만 알린다) */
+  let viaLink = new URLSearchParams(location.search).has('cam');
+  /** 앞 접속들에서 머문 초(다시 붙을 때 이어서 잰다) */
+  let spent = 0;
+  let joinedAt = 0;
+  /** 붙기 전에 생긴 통계 소식(붙으면 보낸다) */
+  const queue: string[] = [];
+  const dwellPending = new Map<string, number>();
 
   const send = (m: unknown) => {
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(m));
@@ -82,9 +148,13 @@ export function createNet(o: Options) {
   function close() {
     const old = ws;
     ws = null;
+    if (online && joinedAt) spent += (performance.now() - joinedAt) / 1000;
+    joinedAt = 0;
     online = false;
     peers.clear();
     if (old) {
+      // 스스로 다시 붙으려고 끊는다: 이 조각의 머문 시간은 다음 접속이 이어서 잰다
+      if (old.readyState === WebSocket.OPEN) old.send('{"t":"bye"}');
       old.onclose = old.onmessage = old.onopen = old.onerror = null;
       try {
         old.close();
@@ -111,7 +181,12 @@ export function createNet(o: Options) {
       }
       sent = { ...last, at: performance.now() };
       sentStation = station;
-      send({ t: 'hello', n: me.name, h: me.helmet, s: station, first, ...last });
+      // 세지 않는 브라우저는 재방문 기록도 건드리지 않는다(나중에 ?nostats=0 으로 풀었을 때 처음 온 것으로 세지게)
+      const v = ns ? null : visitKind();
+      send({
+        t: 'hello', n: me.name, h: me.helmet, s: station, first, ...last,
+        ...(ns ? { ns: true } : { day: v?.day, back: v?.back || undefined, link: (first && viaLink) || undefined, since: Math.round(spent) }),
+      });
     };
     sock.onmessage = (e) => {
       let m: any;
@@ -123,6 +198,13 @@ export function createNet(o: Options) {
       if (m.t === 'init') {
         online = everOnline = true;
         fails = 0;
+        joinedAt = performance.now();
+        viaLink = false;
+        if (!ns) {
+          for (const k of queue.splice(0)) send({ t: 'ev', k });
+          for (const [s, sec] of dwellPending) send({ t: 'dw', s, sec: Math.round(sec) });
+          dwellPending.clear();
+        }
         peers.clear();
         for (const p of m.peers as Peer[]) peers.set(p.id, p);
         // 붙는 사이에 장소를 옮겼으면 지금 알린다
@@ -163,6 +245,10 @@ export function createNet(o: Options) {
     sock.onclose = () => {
       if (ws !== sock) return;
       ws = null;
+      // 예기치 않게 끊겼다: 서버가 이 접속의 머문 시간(앞 조각 since 포함)을 이미 셌으므로 다음 접속은 0부터 잰다
+      // (2026-11-27 Codex 검토: 여기서 이어 더하면 다시 붙은 뒤 앞 시간이 한 번 더 세졌다)
+      spent = 0;
+      joinedAt = 0;
       online = false;
       peers.clear();
       o.onChange();
@@ -237,6 +323,19 @@ export function createNet(o: Options) {
     },
     wave() {
       send({ t: 'wave' });
+    },
+    /** 통계 소식 하나(예: 's:crane' 시작, 'e:crane' 끝냄). 서버는 허용 목록(EV_KEYS)만 받는다 */
+    track(k: string) {
+      if (ns) return;
+      if (online) send({ t: 'ev', k });
+      else if (queue.length < 30) queue.push(k);
+    },
+    /** 그 장소를 직접 본 초(빠른 견학 중은 부르지 않는다) */
+    dwell(s: string, sec: number) {
+      if (ns || !s || sec < 1) return;
+      const v = Math.min(600, sec);
+      if (online) send({ t: 'dw', s, sec: Math.round(v) });
+      else dwellPending.set(s, Math.min(600, (dwellPending.get(s) ?? 0) + v));
     },
     /** 닉네임·안전모 색을 바꾸면 다시 붙는다(서버는 접속할 때 한 번만 받는다) */
     setMe(name: string, helmet: Helmet) {

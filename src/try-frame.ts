@@ -88,6 +88,8 @@ export interface TriesOptions {
   cut: (fn: () => void) => void;
   onEnter: (d: TryDef) => void;
   onExit: (d: TryDef) => void;
+  /** 결과 화면이 떴다(통계: 끝까지 해 봤는가) */
+  onResult?: (d: TryDef) => void;
 }
 
 export function createTries(o: TriesOptions) {
@@ -170,6 +172,7 @@ export function createTries(o: TriesOptions) {
     },
     result: (title, rows, why) => {
       showing = true;
+      if (cur) o.onResult?.(cur);
       held.clear();
       o.el.classList.add('done');
       padEl.hidden = true;

@@ -30,6 +30,8 @@ export interface BuildOptions {
   tour: () => void;
   progress: () => { placed: number; total: number };
   sound: { on: () => boolean; toggle: () => void };
+  /** 통계: 짓기 시작, 블록 하나를 가용접까지, 진수까지 */
+  onEvent?: (what: 'start' | 'landed' | 'launched') => void;
 }
 const KEY = 'ulsan-story:build:v2';
 const FIT_TOL = 3;
@@ -113,6 +115,7 @@ export function createBuild(o: BuildOptions) {
     step = 'crane';
     setBuilding(true);
     craneCard(true);
+    o.onEvent?.('start');
     o.startCrane();
   }
   function stopAll() {
@@ -211,6 +214,7 @@ export function createBuild(o: BuildOptions) {
       const round: Round = { name: r.name, sec: r.sec, touch: r.touch, hard: r.hard, fit, rework };
       rounds.push(round);
       save(round);
+      o.onEvent?.('landed');
       const p = o.progress();
       const left = p.total - p.placed;
       show(
@@ -228,6 +232,7 @@ export function createBuild(o: BuildOptions) {
     onLaunched(r: Launched) {
       if (step !== 'launch') return;
       sea = r;
+      o.onEvent?.('launched');
       show(`${head('진수')}<p>배가 도크를 빠져나왔습니다.</p>${btns(['record', '건조 기록 보기', true])}`);
     },
     get active() {

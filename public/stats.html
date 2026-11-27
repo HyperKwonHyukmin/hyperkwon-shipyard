@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex, nofollow" />
+<title>방문 통계 | 울산조선소 이야기</title>
+<link rel="stylesheet" href="/fonts.css" />
+<!--
+  방문 통계(2026-11-27). 사이트 어디에도 링크하지 않는다. 숫자는 /api/stats(worker/index.ts 의 Stats).
+  서버는 이름 없는 숫자만 모은다. 순방문자와 재방문은 브라우저가 판정한 표시를 센 것이다(net.ts).
+  새 체험을 더하면 아래 EXP 에 이름을 더한다(id 는 main.ts 의 begin()/track() 이름).
+-->
+<style>
+  .viz-root {
+    color-scheme: light;
+    --surface-0: #f4f5f7;
+    --surface-1: #ffffff;
+    --grid: #e3e5e8;
+    --text-primary: #191919;
+    --text-secondary: #666666;
+    --series-1: #257de0;
+    /* 흰 글자를 얹는 단추 바탕(흰 글자와 4.5:1 이상) */
+    --accent-strong: #1b64be;
+  }
+  @media (prefers-color-scheme: dark) {
+    .viz-root {
+      color-scheme: dark;
+      --surface-0: #111214;
+      --surface-1: #191919;
+      --grid: #2c2d30;
+      --text-primary: #efefef;
+      --text-secondary: #9c9c9c;
+      --series-1: #338ced;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--surface-0); color: var(--text-primary); font: 14px/1.5 Pretendard, system-ui, sans-serif; }
+  main { max-width: 1080px; margin: 0 auto; padding: 24px 16px 48px; }
+  header { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+  h1 { font-size: 22px; margin: 0; }
+  h2 { font-size: 15px; margin: 0 0 4px; }
+  .sub, .note { color: var(--text-secondary); font-size: 13px; margin: 2px 0 0; }
+  .seg { display: inline-flex; border: 1px solid var(--grid); border-radius: 8px; overflow: hidden; background: var(--surface-1); }
+  .seg button { font: inherit; border: 0; background: none; color: var(--text-secondary); padding: 8px 14px; min-height: 40px; cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--accent-strong); color: #fff; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .tile { background: var(--surface-1); border-radius: 10px; padding: 12px 14px; }
+  .tile b { display: block; font-size: 26px; font-weight: 700; line-height: 1.2; font-variant-numeric: tabular-nums; }
+  .tile span { color: var(--text-secondary); font-size: 13px; }
+  .tile small { display: block; color: var(--text-secondary); font-size: 12px; margin-top: 2px; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
+  section.card { background: var(--surface-1); border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; min-width: 0; }
+  section.card .note { margin-bottom: 10px; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: 6px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  thead th { color: var(--text-secondary); font-weight: 500; font-size: 12px; }
+  .scroll { overflow-x: auto; }
+  /* 가로 막대: 이름 | 막대 | 값 */
+  .hbars { display: grid; grid-template-columns: max-content 1fr max-content; gap: 6px 10px; align-items: center; }
+  .hbars .lab { color: var(--text-primary); font-size: 13px; }
+  .hbars .val { color: var(--text-secondary); font-size: 13px; font-variant-numeric: tabular-nums; text-align: right; }
+  .track { height: 16px; display: flex; align-items: center; }
+  .bar { height: 16px; background: var(--series-1); border-radius: 0 4px 4px 0; min-width: 2px; }
+  .bar.zero { background: var(--grid); }
+  /* 세로 막대(시간대) */
+  .cols { display: grid; grid-template-columns: repeat(24, 1fr); gap: 2px; align-items: end; height: 140px; border-bottom: 1px solid var(--grid); }
+  .cols .c { display: flex; align-items: end; justify-content: center; height: 100%; }
+  .cols .c i { display: block; width: 100%; max-width: 24px; background: var(--series-1); border-radius: 4px 4px 0 0; min-height: 0; }
+  .ticks { display: grid; grid-template-columns: repeat(24, 1fr); gap: 2px; color: var(--text-secondary); font-size: 11px; text-align: center; margin-top: 4px; }
+  [data-tip] { cursor: default; }
+  [data-tip]:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
+  #tip { position: fixed; z-index: 10; pointer-events: none; background: var(--text-primary); color: var(--surface-1); font-size: 12px; padding: 5px 8px; border-radius: 6px; white-space: nowrap; }
+  #msg { background: var(--surface-1); border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; }
+  footer { color: var(--text-secondary); font-size: 12px; }
+</style>
+</head>
+<body class="viz-root">
+<main>
+  <header>
+    <div>
+      <h1>방문 통계</h1>
+      <p class="sub">울산조선소 이야기. 이름 없는 숫자만 모읍니다(닉네임과 IP 는 저장하지 않음).</p>
+    </div>
+    <div class="seg" role="group" aria-label="기간">
+      <button type="button" data-p="1">오늘</button>
+      <button type="button" data-p="7" aria-pressed="true">7일</button>
+      <button type="button" data-p="30">30일</button>
+    </div>
+  </header>
+  <div id="msg" hidden></div>
+  <div class="tiles" id="tiles"></div>
+  <div class="grid2">
+    <section class="card">
+      <h2>시간대별 방문</h2>
+      <p class="note">한국 시각, 탭을 연 횟수</p>
+      <div class="cols" id="hours"></div>
+      <div class="ticks" id="hour-ticks"></div>
+    </section>
+    <section class="card">
+      <h2>머문 시간</h2>
+      <p class="note" id="dur-note">접속 하나가 서버에 붙어 있던 시간</p>
+      <div class="hbars" id="dur"></div>
+    </section>
+  </div>
+  <section class="card">
+    <h2>직접 해 보기</h2>
+    <p class="note">시작 수와 끝까지 한 수. 끝냄은 결과 화면이 뜬 때(시작 하나에 한 번)</p>
+    <div class="scroll"><table id="exp"></table></div>
+  </section>
+  <div class="grid2">
+    <section class="card">
+      <h2>빠른 견학 어디까지 봤나</h2>
+      <p class="note" id="quick-note"></p>
+      <div class="hbars" id="quick"></div>
+    </section>
+    <section class="card">
+      <h2>장소별 직접 본 시간</h2>
+      <p class="note">빠른 견학과 오프닝 중의 시간은 뺐습니다(분)</p>
+      <div class="hbars" id="dwell"></div>
+    </section>
+  </div>
+  <div class="grid2">
+    <section class="card">
+      <h2>설명 깊이 단추</h2>
+      <p class="note">단추를 누른 횟수(처음 열 때의 기본값은 세지 않음)</p>
+      <div class="hbars" id="level"></div>
+    </section>
+    <section class="card">
+      <h2>공유</h2>
+      <p class="note">사진 모드의 단추를 누른 횟수와, 복사한 시점 주소로 들어온 방문</p>
+      <div class="hbars" id="share"></div>
+    </section>
+  </div>
+  <section class="card">
+    <h2>날짜별</h2>
+    <p class="note">2026-11-27 전 기록에는 방문과 최대 동시 접속만 있습니다</p>
+    <div class="scroll"><table id="days"></table></div>
+  </section>
+  <footer id="foot"></footer>
+</main>
+<div id="tip" hidden></div>
+<script>
+  const EXP = [
+    ['build', '한 척 짓기(블록 하나 이상)'], ['build-sea', '한 척 짓기(진수까지)'], ['crane', '크레인 운전'], ['launch', '직접 진수'],
+    ['heat', '선상가열'], ['weld', '용접 순서'], ['level', '블록 수평 잡기'], ['spray', '스프레이 도장'],
+    ['heel', '경사 시험'], ['helm', '직접 조타'], ['bottle', '명명식'],
+    ['turn', '블록 세우기'], ['lift', '블록 인양 학습'], ['forces', '힘 보기'],
+  ];
+  /** 끝냄이 없는 것(보기만 하는 체험) */
+  const VIEW_ONLY = new Set(['turn', 'lift', 'forces']);
+  const LEGS = ['gate', 'design', 'cutting', 'assembly', 'pe', 'paint', 'dock', 'launch', 'quay', 'trial', 'delivery'];
+  const DUR = ['1분 미만', '1~5분', '5~15분', '15~30분', '30분 이상'];
+  const LEVEL = [['1', '처음'], ['2', '현장'], ['3', '깊이']];
+  const $ = (id) => document.getElementById(id);
+  const fmt = (n) => Math.round(n).toLocaleString('ko-KR');
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  let data = null;
+  let period = 7;
+
+  /** 기간 안 날짜 기록(오늘부터 거꾸로). 기록이 없는 날은 빠진다 */
+  function inPeriod() {
+    if (!data) return [];
+    const today = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
+    const from = new Date(Date.parse(today) - (period - 1) * 86400e3).toISOString().slice(0, 10);
+    return data.days.filter((d) => d.day >= from && d.day <= today);
+  }
+  function sum(days, f) { return days.reduce((s, d) => s + (f(d) || 0), 0); }
+  function sumArr(days, key, n) {
+    const out = Array(n).fill(0);
+    for (const d of days) (d[key] || []).forEach((v, i) => (out[i] += v || 0));
+    return out;
+  }
+  function sumMap(days, key) {
+    const out = {};
+    for (const d of days) for (const [k, v] of Object.entries(d[key] || {})) out[k] = (out[k] || 0) + v;
+    return out;
+  }
+  /** 구간 개수에서 중앙값이 든 구간 */
+  function medianBucket(b) {
+    const n = b.reduce((a, x) => a + x, 0);
+    if (!n) return null;
+    let acc = 0;
+    for (let i = 0; i < b.length; i++) if ((acc += b[i]) >= n / 2) return DUR[i];
+    return DUR[b.length - 1];
+  }
+
+  function tile(label, value, small) {
+    return '<div class="tile"><span>' + esc(label) + '</span><b>' + value + '</b>' + (small ? '<small>' + esc(small) + '</small>' : '') + '</div>';
+  }
+  /** 가로 막대 줄들: [이름, 값, 보이는 값 글자, 풍선 글] */
+  function hbars(el, rows) {
+    const max = Math.max(1, ...rows.map((r) => r[1]));
+    el.innerHTML = rows.map(([lab, v, shown, tip]) =>
+      '<span class="lab">' + esc(lab) + '</span>' +
+      '<span class="track" tabindex="0" data-tip="' + esc(tip || lab + ' ' + shown) + '"><i class="bar' + (v ? '' : ' zero') + '" style="width:' + (v ? Math.max(1, (v / max) * 100) : 0.5) + '%"></i></span>' +
+      '<span class="val">' + esc(shown) + '</span>').join('');
+  }
+
+  function draw() {
+    if (!data) return;
+    const days = inPeriod();
+    const uniq = sum(days, (d) => d.uniq);
+    const ret = { new: sum(days, (d) => d.ret && d.ret.new), d7: sum(days, (d) => d.ret && d.ret.d7), old: sum(days, (d) => d.ret && d.ret.old) };
+    const back = sum(days, (d) => d.back);
+    const visits = sum(days, (d) => d.visits);
+    const peak = Math.max(0, ...days.map((d) => d.peak || 0));
+    const dur = sumArr(days, 'dur', 5);
+    const durN = sum(days, (d) => d.durN);
+    const durAvg = durN ? sum(days, (d) => d.durSum) / durN / 60 : null;
+    const med = medianBucket(dur);
+    const word = period === 1 ? '오늘' : period + '일';
+    $('tiles').innerHTML =
+      tile('지금 접속', fmt(data.now), '30초마다 새로 읽음') +
+      tile('순방문자', fmt(uniq), period === 1 ? '브라우저 기준' : '날마다 센 값의 합') +
+      tile('처음 온 사람', fmt(ret.new), word + ' 동안 처음 온 브라우저') +
+      tile('다시 온 방문', fmt(ret.d7 + ret.old), '7일 안 ' + fmt(ret.d7) + ', 그 전 ' + fmt(ret.old)) +
+      tile('7일 안에 다시 온 사람', fmt(back), '처음 온 날부터 7일 안에 다시 옴') +
+      tile('머문 시간', med || '없음', durAvg === null ? '기록 없음' : '중앙값 구간, 평균 ' + durAvg.toFixed(1) + '분') +
+      tile('방문(탭)', fmt(visits), '탭을 연 횟수') +
+      tile('최대 동시 접속', fmt(peak), word + ' 중 가장 많을 때');
+
+    // 시간대
+    const hours = sumArr(days, 'hours', 24);
+    const hmax = Math.max(1, ...hours);
+    $('hours').innerHTML = hours.map((v, h) =>
+      '<div class="c" tabindex="0" data-tip="' + h + '시 ' + fmt(v) + '번"><i style="height:' + (v ? Math.max(2, (v / hmax) * 100) : 0) + '%"></i></div>').join('');
+    $('hour-ticks').innerHTML = hours.map((_, h) => '<span>' + (h % 3 === 0 ? h : '') + '</span>').join('');
+
+    // 머문 시간
+    hbars($('dur'), dur.map((v, i) => [DUR[i], v, fmt(v), DUR[i] + ' ' + fmt(v) + '번']));
+    $('dur-note').textContent = '접속 하나가 서버에 붙어 있던 시간. 탭을 켜 둔 채 자리를 뜨면 길게 잡히므로 평균은 접속 하나에 60분까지만 더함';
+
+    // 체험
+    const ev = sumMap(days, 'ev');
+    const rows = EXP.map(([id, name]) => {
+      // 한 척 짓기는 시작 하나에 끝냄이 둘(블록 하나를 가용접까지, 진수까지)이라 시작 수를 같이 쓴다
+      const s = ev['s:' + (id === 'build-sea' ? 'build' : id)] || 0;
+      const end = VIEW_ONLY.has(id) ? '보기만' : fmt(ev['e:' + id] || 0);
+      return { name, s, end };
+    }).sort((a, b) => b.s - a.s);
+    $('exp').innerHTML = '<thead><tr><th>체험</th><th>시작</th><th>끝냄</th></tr></thead><tbody>' +
+      rows.map((r) => '<tr><td>' + esc(r.name) + '</td><td>' + fmt(r.s) + '</td><td>' + esc(r.end) + '</td></tr>').join('') + '</tbody>';
+
+    // 빠른 견학
+    const qs = ev['s:quick'] || 0;
+    $('quick-note').textContent = '시작 ' + fmt(qs) + '번, 끝까지 ' + fmt(ev['e:quick'] || 0) + '번. 장소마다 그 장소에 들어간 수';
+    hbars($('quick'), LEGS.map((id, i) => {
+      const v = ev['q:' + id] || 0;
+      const name = (i + 1) + '. ' + ((data.names && data.names[id]) || id);
+      return [name, v, fmt(v), name + ' ' + fmt(v) + '번'];
+    }));
+
+    // 장소별 직접 본 시간
+    const dw = sumMap(days, 'dw');
+    hbars($('dwell'), LEGS.map((id) => {
+      const min = (dw[id] || 0) / 60;
+      const name = (data.names && data.names[id]) || id;
+      return [name, min, min.toFixed(1), name + ' ' + min.toFixed(1) + '분'];
+    }));
+
+    // 설명 깊이, 공유
+    hbars($('level'), LEVEL.map(([n, name]) => [name, ev['lv:' + n] || 0, fmt(ev['lv:' + n] || 0)]));
+    hbars($('share'), [
+      ['사진 저장', ev['sh:photo'] || 0, fmt(ev['sh:photo'] || 0)],
+      ['시점 주소 복사', ev['sh:link'] || 0, fmt(ev['sh:link'] || 0)],
+      ['공유 주소로 들어옴', ev['in:link'] || 0, fmt(ev['in:link'] || 0)],
+    ]);
+
+    // 날짜별(기간과 상관없이 30일 전부)
+    $('days').innerHTML = '<thead><tr><th>날짜</th><th>순방문자</th><th>처음</th><th>7일 안 재방문</th><th>그 전 재방문</th><th>7일 안에 다시 온 사람</th><th>방문(탭)</th><th>최대 동시</th><th>머문 시간 중앙값</th></tr></thead><tbody>' +
+      data.days.map((d) => {
+        const dash = (v) => (v === undefined ? '–' : fmt(v));
+        return '<tr><td>' + esc(d.day) + '</td><td>' + dash(d.uniq) + '</td><td>' + dash(d.ret && d.ret.new) + '</td><td>' + dash(d.ret && d.ret.d7) + '</td><td>' + dash(d.ret && d.ret.old) +
+          '</td><td>' + dash(d.back) + '</td><td>' + fmt(d.visits) + '</td><td>' + fmt(d.peak) + '</td><td>' + esc(medianBucket(d.dur || []) || '–') + '</td></tr>';
+      }).join('') + '</tbody>';
+  }
+
+  async function load() {
+    try {
+      const r = await fetch('/api/stats', { cache: 'no-store' });
+      if (!r.ok) throw new Error(String(r.status));
+      data = await r.json();
+      $('msg').hidden = true;
+      $('foot').textContent = '읽은 시각 ' + new Date().toLocaleTimeString('ko-KR') + '. 기록은 최근 30일까지 보입니다.';
+      draw();
+    } catch (e) {
+      $('msg').hidden = false;
+      $('msg').textContent = '통계 서버에 연결하지 못했습니다(' + e.message + '). 배포 주소나 npm run dev:mp 에서 여세요.';
+    }
+  }
+
+  document.querySelectorAll('.seg button').forEach((b) => b.addEventListener('click', () => {
+    period = Number(b.dataset.p);
+    document.querySelectorAll('.seg button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    draw();
+  }));
+
+  // 풍선 글: 막대에 마우스를 올리거나 키보드로 고르면
+  const tip = $('tip');
+  function showTip(el) {
+    const t = el && el.closest('[data-tip]');
+    if (!t) return (tip.hidden = true);
+    tip.textContent = t.dataset.tip;
+    tip.hidden = false;
+    const r = t.getBoundingClientRect();
+    const w = tip.offsetWidth;
+    tip.style.left = Math.max(4, Math.min(innerWidth - w - 4, r.left + r.width / 2 - w / 2)) + 'px';
+    tip.style.top = Math.max(4, r.top - tip.offsetHeight - 6) + 'px';
+  }
+  document.addEventListener('mouseover', (e) => showTip(e.target));
+  document.addEventListener('focusin', (e) => showTip(e.target));
+  document.addEventListener('scroll', () => (tip.hidden = true), true);
+
+  load();
+  setInterval(load, 30000);
+</script>
+</body>
+</html>

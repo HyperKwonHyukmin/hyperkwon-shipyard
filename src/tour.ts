@@ -43,6 +43,8 @@ interface TourOptions {
   intercept?: (index: number) => boolean;
   /** 장소별 추가 화면(예: 도크의 건조 시점 막대) */
   renderExtra?: (station: Station, el: HTMLElement) => void;
+  /** 사용자가 설명 깊이 단추를 눌렀다(통계용, 1 처음 · 2 현장 · 3 깊이) */
+  onLevel?: (n: number) => void;
 }
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -104,7 +106,10 @@ export function createTour(opt: TourOptions) {
   }
   lvEl.addEventListener('click', (e) => {
     const b = (e.target as Element).closest<HTMLButtonElement>('button[data-lv]');
-    if (b) setLevel(Number(b.dataset.lv));
+    if (b) {
+      setLevel(Number(b.dataset.lv));
+      opt.onLevel?.(Number(b.dataset.lv));
+    }
   });
   {
     let lv = 1;

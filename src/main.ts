@@ -622,6 +622,7 @@ const forces = createForces({
   tag: document.getElementById('force-tag')!,
 });
 function setForces(v: boolean) {
+  if (v && !forces.on) track('s:forces');
   forces.setOn(v);
   forceBtn?.setAttribute('aria-pressed', String(v));
   document.body.classList.toggle('forces', v);
@@ -763,6 +764,7 @@ const turnover = createTurnover(scene, [42, 0, 88], document.getElementById('tur
   },
 });
 function startTurn() {
+  track('s:turn');
   quick.stop();
   setWalk(false);
   tour.select(DOCK_INDEX);
@@ -784,6 +786,26 @@ function updateTimelineLabel(n: number) {
     n === 0 ? '착공 전' : n <= 7 ? '이중저·선수미 하부' : n <= 17 ? '측벽' : n <= 19 ? '선수미 상부' : n < 24 ? '갑판' : n < blocks.length ? '거주구·연돌' : '선체 완성';
   out.textContent = `${n}/${blocks.length} 블록 · ${stage}`;
 }
+// ── 통계(2026-11-27, 대시보드 /stats.html): 체험 시작과 끝냄, 견학 단계, 설명 깊이, 공유, 장소별 직접 본 시간 ──
+// 이름 규칙은 서버 worker/index.ts 의 EV_KEY(s 시작, e 끝냄, q 견학 단계, lv 설명 깊이, sh 공유). 새 체험을 더하면 stats.html 의 이름표도
+/** 시작했고 아직 끝내지 않은 체험(끝냄은 시작 하나에 한 번만 센다) */
+const runs = new Set<string>();
+function track(k: string) {
+  try {
+    net.track(k);
+  } catch {
+    /* 연결을 만들기 전 */
+  }
+}
+function begin(id: string) {
+  runs.add(id);
+  track(`s:${id}`);
+}
+function done(id: string) {
+  if (runs.delete(id)) track(`e:${id}`);
+}
+/** 빠른 견학 이번 바퀴에 이미 센 장소 */
+const quickLegs = new Set<string>();
 // 걷기 모드(아래에서 만든다. 둘러보기가 먼저 만들어져야 해서 변수만 먼저)
 let walk: ReturnType<typeof createWalk> | null = null;
 // ── 도크 밖 장소의 직접 해 보기(2026-11-22): 선상가열·용접 순서·블록 수평·스프레이 도장·경사 시험·조타·명명식 ──
@@ -798,6 +820,7 @@ const tries = createTries({
   seaY: SEA_Y,
   cut: (fn) => cut(fn),
   onEnter: (d) => {
+    begin(d.id);
     quick.stop();
     setWalk(false);
     tour.select(STATIONS.findIndex((s) => s.id === d.station));
@@ -810,6 +833,7 @@ const tries = createTries({
     yard.showLabels(true);
     tour.go(STATIONS.findIndex((s) => s.id === d.station));
   },
+  onResult: (d) => done(d.id),
 });
 for (const d of tries.defs) (ACTS[d.station] ??= []).unshift({ label: d.label, act: 'try', primary: true, run: () => tries.start(d.id) });
 /**
@@ -827,6 +851,7 @@ const EXPERIENCES: Experience[] = [
     station: 'dock',
     at: [-30, 80],
     run: () => {
+      track('s:lift');
       visit('dock');
       window.setTimeout(() => tour.flyTo(liftLab.view.cam, liftLab.view.look), 1800);
     },
@@ -850,6 +875,7 @@ const tour = createTour({
   controls,
   stations: STATIONS,
   placeCamera: !params.has('cam'),
+  onLevel: (n) => track(`lv:${n}`),
   // 걷기 모드에서는 장소를 골라도 카메라를 날리지 않고 주인공을 그 장소 앞으로 옮긴다(-1 = 걷는 중인지 묻기만)
   intercept: (i) => {
     // 크레인 운전 중에는 방향키가 크레인 조작에 쓰인다
@@ -1303,7 +1329,10 @@ const operate = createOperate({
   hud: document.getElementById('op-hud')!,
   // 한 척 짓기 중의 '그만'·Esc 는 그쪽이 받는다(올린 블록이 있으면 건조 기록으로)
   onExit: () => (build.step === 'crane' ? build.leave() : stopOperate()),
-  onLanded: (r) => build.onLanded(r),
+  onLanded: (r) => {
+    if (build.step !== 'crane') done('crane');
+    build.onLanded(r);
+  },
   onImpact: (speed, hard) => sound.thump(hard ? 1 : Math.min(0.6, 0.25 + speed)),
   onEmpty: () => build.onEmpty(),
   onSeated: () => build.onSeated(),
@@ -1312,6 +1341,7 @@ const operate = createOperate({
 });
 const DOCK_INDEX = STATIONS.findIndex((s) => s.id === 'dock');
 function startOperate(quickMode = false) {
+  if (!quickMode) begin('crane');
   quick.stop();
   setWalk(false);
   tour.select(DOCK_INDEX);
@@ -1335,13 +1365,17 @@ const launchTry = createLaunchTry({
   hud: document.getElementById('ln-hud')!,
   launch,
   onExit: () => (build.step === 'launch' ? build.leave() : stopLaunchTry()),
-  onResult: (r) => build.onLaunched(r),
+  onResult: (r) => {
+    if (build.step !== 'launch') done('launch');
+    build.onLaunched(r);
+  },
   onHorn: () => sound.horn(),
   prepare: () => {
     if (erection.placed() < blocks.length) erection.setPlaced(blocks.length);
   },
 });
 function startLaunchTry() {
+  if (build.step !== 'launch') begin('launch');
   quick.stop();
   setWalk(false);
   tour.select(LAUNCH_INDEX);
@@ -1385,8 +1419,18 @@ const quick = createQuickTour({
     { label: '설계동 — 선체 거더 굽힘', run: () => tour.go(STATIONS.findIndex((s) => s.id === 'design')) },
     { label: '블록 인양 학습', run: () => { tour.go(DOCK_INDEX); setTimeout(() => tour.flyTo(liftLab.view.cam, liftLab.view.look), 1800); } },
   ],
-  onStart: () => tour.setCollapsed(true),
+  onStart: () => {
+    tour.setCollapsed(true);
+    quickLegs.clear();
+    begin('quick');
+  },
   onStop: () => tour.restore(),
+  onLeg: (id) => {
+    if (quickLegs.has(id)) return;
+    quickLegs.add(id);
+    track(`q:${id}`);
+  },
+  onDone: () => done('quick'),
 });
 // 주소에 장소(#id)나 확인용 옵션이 없으면 들어오자마자 시작. ?qt 는 언제나 시작(자동 시험용 window.__qt)
 const QT_SKIP = ['operate', 'launchtry', 'walk', 'cam', 'still', 't', 'map', 'blocks', 'forces', 'turn', 'try'];
@@ -1411,6 +1455,13 @@ const build = createBuild({
   tour: () => quick.start(),
   progress: () => ({ placed: erection.placed(), total: blocks.length }),
   sound: { on: () => sound.on, toggle: () => soundBtn?.click() },
+  onEvent: (what) => {
+    if (what === 'start') {
+      begin('build');
+      runs.add('build-sea');
+    } else if (what === 'landed') done('build');
+    else done('build-sea');
+  },
 });
 document.getElementById('build-btn')?.addEventListener('click', () => (build.active ? build.quit() : build.offer()));
 if (params.has('build')) Object.assign(window, { __build: build, __op: operate });
@@ -1479,6 +1530,7 @@ const photo = createPhoto({
   },
   // 사진에는 장소 팻말을 넣지 않는다
   onToggle: (on) => yard.showLabels(!on),
+  onShare: (how) => track(`sh:${how}`),
 });
 document.getElementById('photo')?.addEventListener('click', () => {
   quick.stop();
@@ -1607,6 +1659,15 @@ function applyQuality(level: number) {
   }
 }
 applyQuality(quality);
+/** 지금 장소에서 직접 본 초(장소를 옮기거나 60초가 차면 서버로) */
+const dwell = { at: '', sec: 0 };
+function dwellFlush(next = dwell.at) {
+  if (dwell.at && dwell.sec >= 1) net.dwell(dwell.at, dwell.sec);
+  dwell.at = next;
+  dwell.sec = 0;
+}
+document.addEventListener('visibilitychange', () => document.hidden && dwellFlush());
+window.addEventListener('pagehide', () => dwellFlush());
 let frameNo = 0;
 let lastCraneX = crane.position.x;
 let lastHook = getHookPoint();
@@ -1655,6 +1716,12 @@ renderer.setAnimationLoop(() => {
   if (dayNight.mode === 'night') fog.update(dt, t);
   // 다중 접속: 보고 있는 장소를 알리고, 걷는 동안만 자리를 보낸다
   net.setStation(here);
+  // 통계: 사용자가 직접 본 장소의 시간(빠른 견학과 오프닝은 저절로 넘어가므로 뺀다)
+  if (here !== dwell.at) dwellFlush(here);
+  if (!quick.active && !opening.active && !document.hidden) {
+    dwell.sec += Math.min(rawDt, 1); // 실제 시간(느린 기기는 프레임당 0.1초 제한 dt 가 실제보다 작다)
+    if (dwell.sec >= 60) dwellFlush(here);
+  }
   if (walk?.active) net.setPos(walk.position.x, walk.position.z, walk.heading, walk.riding ? 2 : 1);
   else net.setPos(0, 0, 0, 0);
   peers.update(dt);

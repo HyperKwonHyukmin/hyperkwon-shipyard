@@ -12,6 +12,8 @@ export interface PhotoOptions {
   /** 지금 시점으로 열리는 주소 */
   link: () => string;
   onToggle: (on: boolean) => void;
+  /** 사진 저장, 주소 복사를 눌렀다(통계용) */
+  onShare?: (how: 'photo' | 'link') => void;
 }
 
 export function createPhoto(o: PhotoOptions) {
@@ -30,6 +32,7 @@ export function createPhoto(o: PhotoOptions) {
   }
 
   function save() {
+    o.onShare?.('photo');
     o.render();
     const w = o.canvas.width;
     const h = o.canvas.height;
@@ -63,6 +66,7 @@ export function createPhoto(o: PhotoOptions) {
   }
 
   async function copy() {
+    o.onShare?.('link');
     const url = o.link();
     try {
       await navigator.clipboard.writeText(url);
