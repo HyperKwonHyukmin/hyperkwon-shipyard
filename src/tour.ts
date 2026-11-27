@@ -27,6 +27,8 @@ export interface Experience {
   station: string;
   /** 지도 위 자리(월드 x, z) */
   at: [number, number];
+  /** 체험 고르기 창 맨 위에 크게(중심 체험 '한 척 짓기') */
+  main?: boolean;
   run: () => void;
 }
 const LETTERS = 'ABCDEFGHIJKLMNOP';

@@ -598,7 +598,6 @@ const launch = createLaunch({
 });
 factories.launch = { update: () => {}, status: launch.status };
 // ── 힘 보기(2026-11-22): 받침 반력 막대, 훅 하중, 진수 때 부력 몫(forces.ts) ──
-const forceBtn = document.getElementById('force');
 const forces = createForces({
   scene,
   camera,
@@ -624,13 +623,11 @@ const forces = createForces({
 function setForces(v: boolean) {
   if (v && !forces.on) track('s:forces');
   forces.setOn(v);
-  forceBtn?.setAttribute('aria-pressed', String(v));
   document.body.classList.toggle('forces', v);
   document.querySelector('#acts [data-act="force"]')?.setAttribute('aria-pressed', String(v));
   // 다른 장소에서 켜면 힘이 보이는 도크로 간다
   if (v && !['dock', 'launch'].includes(STATIONS[tour.current]?.id ?? '')) tour.go(DOCK_INDEX);
 }
-forceBtn?.addEventListener('click', () => setForces(!forces.on));
 let dockFloorViewActive = false;
 
 /** 3번 화물창 안으로 들어가 본다. 측벽이 아직이면 측벽까지 쌓은 상태로 옮긴다 */
@@ -842,7 +839,8 @@ for (const d of tries.defs) (ACTS[d.station] ??= []).unshift({ label: d.label, a
  * 체험을 더하면 여기에 한 줄: 장소 id, 지도 위 자리 [x, z](다른 표시와 50 m 쯤 띄운다), 시작 함수.
  */
 const EXPERIENCES: Experience[] = [
-  { label: '한 척 짓기', hint: '블록을 올리고 이음을 맞춰 배 짓기', station: 'dock', at: [-62, 0], run: () => build.offer() },
+  // 지도와 '체험 고르기'에서는 소개 카드 없이 바로 시작한다(2026-11-27). 위 '한 척 짓기' 단추는 소개 카드(build.offer)
+  { label: '한 척 짓기', hint: '블록을 올리고 이음을 맞춰 배 짓기', station: 'dock', at: [-62, 0], main: true, run: () => build.start() },
   { label: '크레인 운전', hint: '적치장에서 블록을 걸어 직접 탑재', station: 'dock', at: [-140, -36], run: () => startOperate() },
   { label: '블록 세우기', hint: '훅 두 개의 하중이 옮겨 가는 것', station: 'dock', at: [42, 88], run: () => startTurn() },
   {
@@ -1418,6 +1416,7 @@ const quick = createQuickTour({
     { label: '직접 진수해 보기', run: () => startLaunchTry() },
     { label: '설계동 — 선체 거더 굽힘', run: () => tour.go(STATIONS.findIndex((s) => s.id === 'design')) },
     { label: '블록 인양 학습', run: () => { tour.go(DOCK_INDEX); setTimeout(() => tour.flyTo(liftLab.view.cam, liftLab.view.look), 1800); } },
+    { label: '체험 모두 보기', run: () => openExp(true) },
   ],
   onStart: () => {
     tour.setCollapsed(true);
@@ -1455,6 +1454,8 @@ const build = createBuild({
   tour: () => quick.start(),
   progress: () => ({ placed: erection.placed(), total: blocks.length }),
   sound: { on: () => sound.on, toggle: () => soundBtn?.click() },
+  // 건조 기록 화면의 '사진 남기기'(2026-11-27: 위 '사진' 단추를 빼고 배를 다 지은 순간으로 옮김)
+  photo: () => photo.toggle(),
   onEvent: (what) => {
     if (what === 'start') {
       begin('build');
@@ -1464,6 +1465,72 @@ const build = createBuild({
   },
 });
 document.getElementById('build-btn')?.addEventListener('click', () => (build.active ? build.quit() : build.offer()));
+// ── 체험 고르기(2026-11-27 사용자: "체험 목록을 보여 주고 바로 하나씩 해 볼 수 있게. 지금은 그 장소에 가서 단추를 또 눌러야 한다") ──
+// 위 '체험' 단추 → EXPERIENCES 를 장소 순서로 묶은 창. 고르면 견학·걷기를 멈추고 바로 그 체험을 시작한다
+const expEl = document.getElementById('exp')!;
+const expList = document.getElementById('exp-list')!;
+const expBtn = document.getElementById('exp-btn');
+const EXP_MENU: Experience[] = [
+  ...EXPERIENCES,
+  { label: '빠른 견학 다시 보기', hint: '11곳을 약 4분에 한 바퀴', station: '', at: [0, 0], run: () => quick.start() },
+];
+document.getElementById('exp-n')!.textContent = String(EXPERIENCES.length);
+function expItem(ex: Experience, k: number) {
+  const li = document.createElement('li');
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.dataset.k = String(k);
+  if (ex.main) b.className = 'exp-main';
+  b.append(ex.label);
+  if (ex.hint) b.append(Object.assign(document.createElement('span'), { textContent: ex.hint }));
+  li.append(b);
+  return li;
+}
+function drawExp() {
+  const list = (pick: (ex: Experience) => boolean) => {
+    const ul = document.createElement('ul');
+    EXP_MENU.forEach((ex, k) => pick(ex) && ul.append(expItem(ex, k)));
+    return ul;
+  };
+  const head = (t: string) => Object.assign(document.createElement('h3'), { textContent: t });
+  // 장소 묶음은 여러 단으로 흘려 채운다(한 장소에 하나뿐인 곳이 많아 한 줄씩 두면 길어진다)
+  const cols = Object.assign(document.createElement('div'), { className: 'exp-cols' });
+  const group = (t: string, pick: (ex: Experience) => boolean) => {
+    const g = Object.assign(document.createElement('section'), { className: 'exp-g' });
+    g.append(head(t), list(pick));
+    cols.append(g);
+  };
+  STATIONS.forEach((s, j) => {
+    if (EXP_MENU.some((ex) => !ex.main && ex.station === s.id)) group(`${j}. ${s.name}`, (ex) => !ex.main && ex.station === s.id);
+  });
+  group('둘러보기', (ex) => ex.station === '');
+  expList.replaceChildren(list((ex) => !!ex.main), cols);
+}
+function openExp(open: boolean) {
+  expEl.hidden = !open;
+  expBtn?.setAttribute('aria-expanded', String(open));
+  if (!open) return;
+  track('ui:exp');
+  drawExp();
+  expList.querySelector<HTMLButtonElement>('button')?.focus();
+}
+expBtn?.addEventListener('click', () => openExp(expEl.hidden));
+document.getElementById('exp-close')?.addEventListener('click', () => openExp(false));
+expEl.addEventListener('click', (e) => {
+  if (e.target === expEl) return openExp(false);
+  const b = (e.target as Element).closest<HTMLElement>('[data-k]');
+  const ex = b && EXP_MENU[Number(b.dataset.k)];
+  if (!ex) return;
+  openExp(false);
+  quick.stop();
+  setWalk(false);
+  ex.run();
+});
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !expEl.hidden) openExp(false);
+});
+// 보기 설정 단추를 누른 횟수(2026-11-27: 묶거나 뺄지 1주일 보고 정한다)
+for (const id of ['time', 'sound', 'speed', 'spin', 'overview']) document.getElementById(id)?.addEventListener('click', () => track(`ui:${id}`));
 if (params.has('build')) Object.assign(window, { __build: build, __op: operate });
 const autoTour = !firstHash && !QT_SKIP.some((k) => params.has(k));
 // 처음 들어오면 오프닝 장면(아래)을 먼저 보여 주고, 끝나면 빠른 견학을 시작한다. ?qt 는 오프닝 없이 바로(자동 시험), ?open 은 오프닝만 확인
@@ -1531,10 +1598,6 @@ const photo = createPhoto({
   // 사진에는 장소 팻말을 넣지 않는다
   onToggle: (on) => yard.showLabels(!on),
   onShare: (how) => track(`sh:${how}`),
-});
-document.getElementById('photo')?.addEventListener('click', () => {
-  quick.stop();
-  photo.toggle();
 });
 if (params.has('forces')) setForces(true);
 // ?try=이름: 그 체험을 연 채로 시작(heat weld level spray heel helm bottle). window.__tries.debug() 로 상태를 읽는다(자동 시험용)

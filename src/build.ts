@@ -32,6 +32,8 @@ export interface BuildOptions {
   sound: { on: () => boolean; toggle: () => void };
   /** 통계: 짓기 시작, 블록 하나를 가용접까지, 진수까지 */
   onEvent?: (what: 'start' | 'landed' | 'launched') => void;
+  /** 건조 기록 화면의 '사진 남기기'(사진 모드 열기) */
+  photo?: () => void;
 }
 const KEY = 'ulsan-story:build:v2';
 const FIT_TOL = 3;
@@ -144,6 +146,8 @@ export function createBuild(o: BuildOptions) {
       step = 'launch';
       show(`${head('진수')}<p>물을 채워 배를 띄우고, 게이트를 열어 예인선으로 끌어냅니다. 도크 안에서는 3 노트를 넘기지 마세요.</p>`, true);
       o.startLaunch();
+    } else if (what === 'photo') {
+      o.photo?.();
     } else if (what === 'record') {
       stopAll();
       record();
@@ -170,7 +174,7 @@ export function createBuild(o: BuildOptions) {
       <p class="bd-sum">블록 <b>${n}개</b> · 블록당 평균 ${Math.round(avg)}초 · 재작업 합계 <b>${h1(total + r4)}시간</b></p>
       <p class="bd-day">오늘 올린 블록 ${s.count}개${s.fast !== null ? ` · 가장 빠른 무재작업 블록 ${Math.round(s.fast)}초` : ''}</p>
       <small>재작업 시간은 실수의 크기를 현장 일로 바꿔 본 교육용 예시이며 실제 공수 기준이 아닙니다(허용 오차 ${FIT_TOL} mm 를 넘긴 1 mm 당 0.3 h, 충격 착지 2 h, 진수 과속 1초당 0.5 h). 조건은 내일 바뀝니다.</small>
-      ${btns(['start', '이어서 더 올리기', true], ['tour', '둘러보기'], ['quit', '닫기'])}`);
+      ${btns(['start', '이어서 더 올리기', true], ...(o.photo ? [['photo', '사진 남기기'] as [string, string]] : []), ['tour', '둘러보기'], ['quit', '닫기'])}`);
   }
   function quit() {
     stopAll();

@@ -132,6 +132,11 @@
       <p class="note">사진 모드의 단추를 누른 횟수와, 복사한 시점 주소로 들어온 방문</p>
       <div class="hbars" id="share"></div>
     </section>
+    <section class="card">
+      <h2>위 단추</h2>
+      <p class="note">'체험' 창을 연 횟수와 보기 설정 단추를 누른 횟수(2026-11-27부터)</p>
+      <div class="hbars" id="ui"></div>
+    </section>
   </div>
   <section class="card">
     <h2>날짜별</h2>
@@ -267,6 +272,8 @@
       ['시점 주소 복사', ev['sh:link'] || 0, fmt(ev['sh:link'] || 0)],
       ['공유 주소로 들어옴', ev['in:link'] || 0, fmt(ev['in:link'] || 0)],
     ]);
+    hbars($('ui'), [['exp', '체험 창 열기'], ['time', '낮과 밤'], ['sound', '소리'], ['speed', '장면 속도'], ['spin', '회전'], ['overview', '전체 보기']]
+      .map(([k, name]) => [name, ev['ui:' + k] || 0, fmt(ev['ui:' + k] || 0)]));
 
     // 날짜별(기간과 상관없이 30일 전부)
     $('days').innerHTML = '<thead><tr><th>날짜</th><th>순방문자</th><th>처음</th><th>7일 안 재방문</th><th>그 전 재방문</th><th>7일 안에 다시 온 사람</th><th>방문(탭)</th><th>최대 동시</th><th>머문 시간 중앙값</th></tr></thead><tbody>' +

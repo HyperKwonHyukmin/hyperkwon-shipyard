@@ -40,6 +40,8 @@ const EV_KEYS = new Set([
   ...STATIONS.map((s) => `q:${s.id}`),
   'lv:1', 'lv:2', 'lv:3',
   'sh:photo', 'sh:link',
+  // 위 단추(2026-11-27): 체험 고르기 창 열기, 보기 설정 단추
+  'ui:exp', 'ui:time', 'ui:sound', 'ui:speed', 'ui:spin', 'ui:overview',
 ]);
 /** 한 접속이 보낼 수 있는 통계 소식 수 */
 const EV_MAX = 300;
